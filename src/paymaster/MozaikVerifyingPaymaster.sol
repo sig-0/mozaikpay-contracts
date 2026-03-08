@@ -70,7 +70,7 @@ contract MozaikVerifyingPaymaster is BasePaymaster, EIP712 {
      *           - validAfter: not-before timestamp (0 = no constraint); for scheduled operations
      */
     bytes32 private constant SPONSORED_OP_TYPEHASH =
-    keccak256("SponsoredOp(address sender,uint256 nonce,uint48 validUntil,uint48 validAfter)");
+        keccak256("SponsoredOp(address sender,uint256 nonce,uint48 validUntil,uint48 validAfter)");
 
     /**
      * @notice Emitted when the verifying signer is rotated.
@@ -94,8 +94,8 @@ contract MozaikVerifyingPaymaster is BasePaymaster, EIP712 {
      * @param _owner           The address that will own this contract (can rotate signer, withdraw).
      */
     constructor(IEntryPoint _entryPoint, address _verifyingSigner, address _owner)
-    BasePaymaster(_entryPoint, _owner)
-    EIP712("MozaikPaymaster", "1")
+        BasePaymaster(_entryPoint, _owner)
+        EIP712("MozaikPaymaster", "1")
     {
         if (_verifyingSigner == address(0)) revert InvalidSignerAddress();
 
@@ -140,16 +140,16 @@ contract MozaikVerifyingPaymaster is BasePaymaster, EIP712 {
         bytes32, // userOpHash
         uint256 // maxCost
     )
-    internal
-    view
-    override
-    returns (bytes memory context, uint256 validationData)
+        internal
+        view
+        override
+        returns (bytes memory context, uint256 validationData)
     {
         bytes calldata paymasterAndData = userOp.paymasterAndData;
         uint256 offset = UserOperationLib.PAYMASTER_DATA_OFFSET;
 
-        uint48 validUntil = uint48(bytes6(paymasterAndData[offset : offset + 6]));
-        uint48 validAfter = uint48(bytes6(paymasterAndData[offset + 6 : offset + 12]));
+        uint48 validUntil = uint48(bytes6(paymasterAndData[offset:offset + 6]));
+        uint48 validAfter = uint48(bytes6(paymasterAndData[offset + 6:offset + 12]));
 
         bytes calldata pmSig = UserOperationLib.getPaymasterSignature(paymasterAndData);
 
