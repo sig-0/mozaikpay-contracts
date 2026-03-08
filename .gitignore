@@ -1,0 +1,17 @@
+# Foundry build artifacts
+out/
+cache/
+.gas-snapshot
+lcov.info
+
+# Secrets
+.env
+
+# Fuzzing corpus and static analysis artifacts (all generated)
+echidna-corpus/
+crytic-export/
+
+# Editor leftovers
+.idea
+.vscode
+*.log

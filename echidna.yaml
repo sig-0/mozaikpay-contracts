@@ -1,0 +1,5 @@
+testMode: property
+seqLen: 100
+corpusDir: echidna-corpus
+coverage: true
+solcArgs: "--optimize --optimize-runs 200"
