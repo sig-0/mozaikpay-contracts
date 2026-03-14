@@ -25,13 +25,13 @@ remappings:
 # Runs unit / fuzz / invariant tests without the RPC
 .PHONY: test
 test:
-	forge test --no-match-test "Fork\|fork"
+	forge test --no-match-contract "UserOpFlow"
 
-# Runs integration tests.
+# Runs fork integration tests against Base Sepolia.
 # Requires BASE_SEPOLIA_RPC in the env to be set
 .PHONY: test-fork
 test-fork:
-	forge test --match-test "Fork\|fork"
+	forge test --match-contract "UserOpFlow"
 
 # Runs invariant tests only
 .PHONY: test-invariant

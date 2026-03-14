@@ -21,11 +21,11 @@ contract RecoveryFlowTest is BaseTest {
 
     function setUp() public override {
         super.setUp();
+
         account = _deployAccount();
     }
 
-    // Recovery key directly calls rotateSpendingSigner (no bundler needed).
-    function test_RestoreOnNewPhone_DirectRecoveryKeyCall() public {
+    function test_RotateSpendingSigner_DirectCall() public {
         (address newDeviceKey,) = makeAddrAndKey("newDeviceKey");
 
         vm.prank(recoverySigner);
@@ -40,11 +40,12 @@ contract RecoveryFlowTest is BaseTest {
         assertEq(usdc.balanceOf(attacker), 25e6);
     }
 
-    // Recovery key sponsors a UserOp to rotate spending signer (bundler / paymaster path).
-    function test_RestoreOnNewPhone_RecoveryUserOp() public {
+    function test_RotateSpendingSigner_RecoveryUserOp() public {
         (address newDeviceKey,) = makeAddrAndKey("newDeviceKey");
+
         bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (newDeviceKey));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
+
         op = _signRecoveryUserOp(op, recoverySignerKey);
 
         vm.prank(ENTRY_POINT_V09);
@@ -62,8 +63,7 @@ contract RecoveryFlowTest is BaseTest {
         assertEq(usdc.balanceOf(attacker), 25e6);
     }
 
-    // Rotating the recovery key invalidates the old key for future recovery ops.
-    function test_RotateRecoveryKey_OldKeyCanNoLongerRecover() public {
+    function test_RotateRecoveryKey_InvalidOldKey() public {
         (address nextRecoveryKey,) = makeAddrAndKey("nextRecoveryKey");
 
         vm.prank(recoverySigner);
@@ -83,8 +83,7 @@ contract RecoveryFlowTest is BaseTest {
         assertEq(account.spendingSigner(), recoveredDeviceKey);
     }
 
-    // Recovery key can upgrade the account implementation.
-    function test_UpgradeAccount_RecoveryKeyAuthorizes() public {
+    function test_UpgradeAccount_ValidCall() public {
         MockMozaikAccountV2 newImpl = new MockMozaikAccountV2();
 
         vm.prank(recoverySigner);
@@ -93,8 +92,7 @@ contract RecoveryFlowTest is BaseTest {
         assertEq(IVersionedAccount(address(account)).version(), 2);
     }
 
-    // Spending key cannot upgrade the account.
-    function test_RevertWhen_SpendingKeyTriesToUpgrade() public {
+    function test_UpgradeAccount_InvalidCall() public {
         MockMozaikAccountV2 newImpl = new MockMozaikAccountV2();
 
         vm.prank(spendingSigner);
@@ -102,8 +100,7 @@ contract RecoveryFlowTest is BaseTest {
         account.upgradeToAndCall(address(newImpl), "");
     }
 
-    // Spending key cannot call recovery functions even via EntryPoint.
-    function test_RevertWhen_SpendingKeyUserOpCallsRotateSpendingSigner() public {
+    function test_RotateSpendingSigner_InvalidRotate() public {
         address newDeviceKey = makeAddr("newDeviceKey");
         bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (newDeviceKey));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
@@ -112,14 +109,13 @@ contract RecoveryFlowTest is BaseTest {
         vm.prank(ENTRY_POINT_V09);
         account.validateUserOp(op, _userOpHash(op), 0);
 
-        // EntryPoint calls rotateSpendingSigner but tstore slot = 1 (spending) → rejected
+        // EntryPoint calls rotateSpendingSigner but tstore slot = 1 (spending) -> rejected
         vm.prank(ENTRY_POINT_V09);
         vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, ENTRY_POINT_V09));
         account.rotateSpendingSigner(newDeviceKey);
     }
 
-    // Recovery key cannot call execute (arbitrary spending) even via EntryPoint.
-    function test_RevertWhen_RecoveryKeyUserOpCallsExecute() public {
+    function test_Execute_RecoveryCannotExecute() public {
         usdc.mint(address(account), 100e6);
         bytes memory innerCall = abi.encodeCall(usdc.transfer, (attacker, 100e6));
         PackedUserOperation memory op =
@@ -129,7 +125,7 @@ contract RecoveryFlowTest is BaseTest {
         vm.prank(ENTRY_POINT_V09);
         account.validateUserOp(op, _userOpHash(op), 0);
 
-        // EntryPoint calls execute but tstore slot = 2 (recovery) → rejected
+        // EntryPoint calls execute but tstore slot = 2 (recovery) -> rejected
         vm.prank(ENTRY_POINT_V09);
         vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, ENTRY_POINT_V09));
         account.execute(address(usdc), 0, innerCall);

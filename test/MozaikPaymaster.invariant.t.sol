@@ -24,7 +24,7 @@ contract PaymasterHandler is Test {
 
     // Ghost variables for invariant tracking
     bool public unsignedOpEverSponsored;
-    bool public expiredOpEverSponsored;
+    bool public expiredSigEverRejected;
 
     constructor() {
         (, verifyingSignerKey) = makeAddrAndKey("verifyingSigner");
@@ -149,11 +149,14 @@ contract PaymasterHandler is Test {
         vm.prank(address(entryPoint));
         (, uint256 validationData) = paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
 
+        // The expired validUntil must be propagated so the EntryPoint can enforce it.
         assertEq((validationData >> 160) & type(uint48).max, 0, "expired validUntil must propagate");
 
-        // Track: an expired op must never result in a sponsored (zero aggregator = "success") outcome
-        // after EntryPoint time check. We simply check that validUntil=0 propagates correctly.
-        // (EntryPoint rejects if returnedUntil < block.timestamp.
+        // A validly-signed op must pass sig validation regardless of time expiry.
+        // Sig failure and time expiry are separate concerns, and the paymaster must not confuse them.
+        if ((validationData & type(uint160).max) != 0) {
+            expiredSigEverRejected = true;
+        }
     }
 
     function submitUnsignedOp(address owner) external {
@@ -170,7 +173,7 @@ contract PaymasterHandler is Test {
         (, uint256 validationData) = paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
 
         if ((validationData & type(uint160).max) == 0) {
-            // This should never happen — unsigned op passed sig validation
+            // This should never happen: unsigned op passed sig validation
             unsignedOpEverSponsored = true;
         }
     }
@@ -198,10 +201,8 @@ contract MozaikPaymasterInvariantTest is Test {
         assertFalse(handler.unsignedOpEverSponsored(), "unsigned op must never pass paymaster validation");
     }
 
-    function invariant_ExpiredApprovalNeverSponsored() public pure {
-        // Enforced directly in handler.submitExpiredOp() via assertion.
-        // This invariant is satisfied as long as no assertion failure occurred during the run
-        assertTrue(true);
+    function invariant_ExpiredSigNeverRejected() public view {
+        assertFalse(handler.expiredSigEverRejected(), "valid sig on expired op must not be marked as sig-failed");
     }
 
     function _selectors() internal pure returns (bytes4[] memory s) {
