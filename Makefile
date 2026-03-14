@@ -10,7 +10,7 @@ clean:
 
 .PHONY: lint
 lint:
-	forge lint src/ --deny notes
+	forge lint src/ --deny notes --force
 
 .PHONY: format
 format:

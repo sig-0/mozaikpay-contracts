@@ -166,9 +166,11 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
         }
 
         if (sigType == SIG_SPENDING) {
-            (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(userOpHash, ecdsaSig);
+            (address spendingRecovered, ECDSA.RecoverError spendingErr,) = ECDSA.tryRecover(userOpHash, ecdsaSig);
 
-            if (err != ECDSA.RecoverError.NoError || recovered != spendingSigner) return SIG_VALIDATION_FAILED;
+            if (spendingErr != ECDSA.RecoverError.NoError || spendingRecovered != spendingSigner) {
+                return SIG_VALIDATION_FAILED;
+            }
 
             assembly {
                 tstore(_TS_KEY_TYPE, 1)
