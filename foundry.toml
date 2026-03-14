@@ -22,7 +22,7 @@ show_metrics = true
 # echidna_ prefix on invariant functions (cannot be renamed to mixedCase).
 # make lint only runs on src/ where no mixed-case violations exist.
 [lint]
-exclude_lints = ["mixed-case-function"]
+exclude_lints = ["mixed-case-function", "asm-keccak256"]
 
 [rpc_endpoints]
 base_mainnet = "${BASE_MAINNET_RPC}"
