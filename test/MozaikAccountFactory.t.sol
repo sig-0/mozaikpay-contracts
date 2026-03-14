@@ -15,75 +15,63 @@ contract MozaikAccountFactoryTest is BaseTest {
     }
 
     function test_CreateAccount_DeploysProxyAtExpectedAddress() public {
-        address expected = factory.getAddress(owner);
+        address expected = factory.computeAddress(spendingSigner, recoverySigner);
 
         vm.prank(senderCreator);
-        MozaikAccount acct = factory.createAccount(owner);
+        MozaikAccount account = factory.createAccount(spendingSigner, recoverySigner);
 
-        assertEq(address(acct), expected);
-        assertTrue(address(acct).code.length > 0);
+        assertEq(address(account), expected);
+        assertTrue(address(account).code.length > 0);
     }
 
     function test_CreateAccount_IsIdempotent() public {
         vm.prank(senderCreator);
-        MozaikAccount first = factory.createAccount(owner);
+        MozaikAccount first = factory.createAccount(spendingSigner, recoverySigner);
 
         vm.prank(senderCreator);
-        MozaikAccount second = factory.createAccount(owner);
+        MozaikAccount second = factory.createAccount(spendingSigner, recoverySigner);
 
         assertEq(address(first), address(second));
     }
 
-    function test_GetAddress_MatchesDeployedAddress() public {
-        address predicted = factory.getAddress(owner);
-
+    function test_CreateAccount_SetsSpendingAndRecoverySigner() public {
         vm.prank(senderCreator);
-        MozaikAccount acct = factory.createAccount(owner);
+        MozaikAccount account = factory.createAccount(spendingSigner, recoverySigner);
 
-        assertEq(address(acct), predicted);
+        assertEq(account.spendingSigner(), spendingSigner);
+        assertEq(account.recoverySigner(), recoverySigner);
     }
 
     function test_GetAddress_IsStableAcrossMultipleCalls() public view {
-        address first = factory.getAddress(owner);
-        address second = factory.getAddress(owner);
-
-        assertEq(first, second);
+        assertEq(
+            factory.computeAddress(spendingSigner, recoverySigner),
+            factory.computeAddress(spendingSigner, recoverySigner)
+        );
     }
 
-    function test_AccountImplementationIsShared() public {
-        address other = makeAddr("other");
-
-        vm.prank(senderCreator);
-        MozaikAccount acct1 = factory.createAccount(owner);
-
-        vm.prank(senderCreator);
-        MozaikAccount acct2 = factory.createAccount(other);
-
-        bytes32 slot = bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
-        address impl1 = address(uint160(uint256(vm.load(address(acct1), slot))));
-        address impl2 = address(uint160(uint256(vm.load(address(acct2), slot))));
-
-        assertEq(impl1, impl2);
-        assertEq(impl1, address(factory.ACCOUNT_IMPLEMENTATION()));
-    }
-
-    function test_DeployedAccountOwnerIsCorrect() public {
-        vm.prank(senderCreator);
-        MozaikAccount acct = factory.createAccount(owner);
-
-        assertTrue(acct.signers(owner));
-    }
-
-    function testFuzz_DifferentOwnersDifferentAddresses(address a, address b) public view {
+    function testFuzz_GetAddress_DifferentSpendingKeysYieldDifferentAddresses(address a, address b) public view {
+        vm.assume(a != address(0));
+        vm.assume(b != address(0));
         vm.assume(a != b);
 
-        assertNotEq(factory.getAddress(a), factory.getAddress(b));
+        assertNotEq(factory.computeAddress(a, recoverySigner), factory.computeAddress(b, recoverySigner));
     }
 
     function test_RevertWhen_CreateAccountCalledByNonSenderCreator() public {
         vm.prank(attacker);
         vm.expectRevert(abi.encodeWithSelector(MozaikAccountFactory.NotSenderCreator.selector, attacker));
+        factory.createAccount(spendingSigner, recoverySigner);
+    }
 
-        factory.createAccount(owner);
+    function test_RevertWhen_CreateAccountCalledWithZeroSpendingSigner() public {
+        vm.prank(senderCreator);
+        vm.expectRevert(MozaikAccountFactory.ZeroAddress.selector);
+        factory.createAccount(address(0), recoverySigner);
+    }
+
+    function test_RevertWhen_CreateAccountCalledWithZeroRecoverySigner() public {
+        vm.prank(senderCreator);
+        vm.expectRevert(MozaikAccountFactory.ZeroAddress.selector);
+        factory.createAccount(spendingSigner, address(0));
     }
 }

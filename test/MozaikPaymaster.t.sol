@@ -16,7 +16,7 @@ contract MozaikPaymasterTest is BaseTest {
     function setUp() public override {
         super.setUp();
 
-        account = _deployAccount(owner);
+        account = _deployAccount();
         validUntil = uint48(block.timestamp + 1 hours);
         validAfter = 0;
     }
@@ -78,6 +78,32 @@ contract MozaikPaymasterTest is BaseTest {
 
         // Tamper the sender after signing
         op.sender = attacker;
+
+        vm.prank(address(localEntryPoint));
+        (, uint256 validationData) = paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
+
+        (address agg,,) = _unpackValidation(validationData);
+        assertEq(agg, address(1));
+    }
+
+    function test_ValidatePaymasterUserOp_RejectsTamperedCallData() public {
+        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        op.paymasterAndData = _signPaymasterApproval(op, validUntil, validAfter, verifyingSignerKey, address(paymaster));
+
+        op.callData = abi.encodeWithSignature("transfer(address,uint256)", attacker, 1000);
+
+        vm.prank(address(localEntryPoint));
+        (, uint256 validationData) = paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
+
+        (address agg,,) = _unpackValidation(validationData);
+        assertEq(agg, address(1));
+    }
+
+    function test_ValidatePaymasterUserOp_RejectsTamperedGasLimits() public {
+        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        op.paymasterAndData = _signPaymasterApproval(op, validUntil, validAfter, verifyingSignerKey, address(paymaster));
+
+        op.accountGasLimits = bytes32(abi.encodePacked(uint128(2_000_000), uint128(2_000_000)));
 
         vm.prank(address(localEntryPoint));
         (, uint256 validationData) = paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
@@ -159,22 +185,22 @@ contract MozaikPaymasterTest is BaseTest {
 
     function test_SetVerifyingSigner_UpdatesAddress() public {
         address newSigner = makeAddr("newSigner");
-        paymaster.setVerifyingSigner(newSigner);
+        paymaster.setSponsor(newSigner);
 
-        assertEq(paymaster.verifyingSigner(), newSigner);
+        assertEq(paymaster.sponsor(), newSigner);
     }
 
     function test_RevertWhen_SetVerifyingSignerCalledByNonOwner() public {
         vm.prank(attacker);
         vm.expectRevert();
 
-        paymaster.setVerifyingSigner(attacker);
+        paymaster.setSponsor(attacker);
     }
 
     function test_RevertWhen_SetVerifyingSignerToZeroAddress() public {
-        vm.expectRevert(MozaikVerifyingPaymaster.InvalidSignerAddress.selector);
+        vm.expectRevert(MozaikVerifyingPaymaster.ZeroAddress.selector);
 
-        paymaster.setVerifyingSigner(address(0));
+        paymaster.setSponsor(address(0));
     }
 
     function test_Deposit_IncreasesEntryPointBalance() public {

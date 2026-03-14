@@ -95,25 +95,62 @@ anvil-fork:
 anvil-fork-mainnet:
 	anvil --fork-url "$(BASE_MAINNET_RPC)"
 
-# Deployment commands.
-# add --broadcast to send (it's a dry-run by default)
+# Deployment
+# Add --broadcast to send (dry-run by default).
+# Requires SPONSOR_ADDRESS in the env.
+# The broadcaster is determined by the --account keystore flag or PRIVATE_KEY.
+
 .PHONY: deploy-sepolia
 deploy-sepolia:
 	forge script script/01_Deploy.s.sol \
 		--rpc-url base_sepolia \
-		--account deployer \
 		$(EXTRA)
+
+.PHONY: deploy-mainnet
+deploy-mainnet:
+	forge script script/01_Deploy.s.sol \
+		--rpc-url base \
+		$(EXTRA)
+
+# Funding
+# Requires PAYMASTER_ADDRESS and DEPOSIT_AMOUNT_WEI in the env.
 
 .PHONY: fund-paymaster-sepolia
 fund-paymaster-sepolia:
 	forge script script/02_FundPaymaster.s.sol \
 		--rpc-url base_sepolia \
-		--account deployer \
 		$(EXTRA)
+
+.PHONY: fund-paymaster-mainnet
+fund-paymaster-mainnet:
+	forge script script/02_FundPaymaster.s.sol \
+		--rpc-url base \
+		$(EXTRA)
+
+# Ownership transfer
+# Requires PAYMASTER_ADDRESS and NEW_OWNER_ADDRESS in the env.
 
 .PHONY: transfer-ownership-sepolia
 transfer-ownership-sepolia:
 	forge script script/03_TransferOwnership.s.sol \
 		--rpc-url base_sepolia \
-		--account deployer \
 		$(EXTRA)
+
+.PHONY: transfer-ownership-mainnet
+transfer-ownership-mainnet:
+	forge script script/03_TransferOwnership.s.sol \
+		--rpc-url base \
+		$(EXTRA)
+
+# Post-deploy verification
+# Requires FACTORY_ADDRESS and PAYMASTER_ADDRESS in the env.
+
+.PHONY: verify-sepolia
+verify-sepolia:
+	forge script script/VerifyDeploy.s.sol \
+		--rpc-url base_sepolia
+
+.PHONY: verify-mainnet
+verify-mainnet:
+	forge script script/VerifyDeploy.s.sol \
+		--rpc-url base

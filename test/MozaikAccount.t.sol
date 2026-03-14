@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {SIG_VALIDATION_SUCCESS, SIG_VALIDATION_FAILED} from "account-abstraction/core/Helpers.sol";
 
@@ -14,116 +13,75 @@ contract MozaikAccountTest is BaseTest {
     function setUp() public override {
         super.setUp();
 
-        account = _deployAccount(owner);
+        account = _deployAccount();
 
         vm.deal(address(account), 1 ether);
     }
 
-    function test_Initialize_SetsOwnerAsSigner() public view {
-        assertTrue(account.signers(owner));
+    function test_Account_ValidSpendingAndRecovery() public view {
+        assertEq(account.spendingSigner(), spendingSigner);
+        assertEq(account.recoverySigner(), recoverySigner);
     }
 
-    function test_RevertWhen_InitializeCalledTwice() public {
+    function test_Account_InvalidInitialize() public {
         vm.expectRevert();
-
-        account.initialize(attacker);
+        account.initialize(attacker, attacker);
     }
 
-    function test_Execute_TransfersUSDCWhenCalledByOwner() public {
+    function test_Account_ValidUSDCTransfer() public {
         usdc.mint(address(account), 1000e6);
-        bytes memory data = abi.encodeCall(usdc.transfer, (attacker, 500e6));
 
-        vm.prank(owner);
-        account.execute(address(usdc), 0, data);
+        vm.prank(spendingSigner);
+        account.execute(address(usdc), 0, abi.encodeCall(usdc.transfer, (attacker, 500e6)));
 
         assertEq(usdc.balanceOf(attacker), 500e6);
     }
 
-    function test_Execute_SucceedsWhenCalledByEntryPoint() public {
+    function test_Account_ValidUserOpExecute() public {
         usdc.mint(address(account), 1000e6);
-        bytes memory data = abi.encodeCall(usdc.transfer, (attacker, 100e6));
+
+        bytes memory callData =
+            abi.encodeCall(account.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (attacker, 100e6))));
+
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
+        op = _signSpendingUserOp(op, spendingSignerKey);
 
         vm.prank(ENTRY_POINT_V09);
-        account.execute(address(usdc), 0, data);
+        account.validateUserOp(op, _userOpHash(op), 0);
+
+        vm.prank(ENTRY_POINT_V09);
+        account.execute(address(usdc), 0, abi.encodeCall(usdc.transfer, (attacker, 100e6)));
 
         assertEq(usdc.balanceOf(attacker), 100e6);
     }
 
-    function test_RevertWhen_ExecuteCalledByStranger() public {
-        bytes memory data = abi.encodeCall(usdc.transfer, (attacker, 1));
+    function test_Account_InvalidUserOpExecute() public {
+        vm.prank(ENTRY_POINT_V09);
+        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, ENTRY_POINT_V09));
+        account.execute(address(usdc), 0, "");
+    }
 
-        vm.expectRevert();
+    function test_Account_UnauthorizedUserOp() public {
         vm.prank(attacker);
-
-        account.execute(address(usdc), 0, data);
+        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, attacker));
+        account.execute(address(usdc), 0, "");
     }
 
-    function test_Execute_RevertsOnFailedCall() public {
-        // Transfer more USDC than balance -> ERC20 reverts
-        bytes memory data = abi.encodeCall(usdc.transfer, (attacker, 1e18));
+    function test_Account_InvalidRecoveryUserOp() public {
+        vm.prank(recoverySigner);
+        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, recoverySigner));
+        account.execute(address(usdc), 0, "");
+    }
 
-        vm.prank(owner);
+    function test_Account_ExecuteFails() public {
+        vm.prank(spendingSigner);
         vm.expectRevert();
-        account.execute(address(usdc), 0, data);
+        account.execute(address(usdc), 0, abi.encodeCall(usdc.transfer, (attacker, 1)));
     }
 
-    function testFuzz_Execute_OnlyOwnerOrEntryPointCanCall(address caller) public {
-        vm.assume(caller != owner && caller != ENTRY_POINT_V09);
-
-        bytes memory data = "";
-
-        vm.prank(caller);
-        vm.expectRevert();
-        account.execute(address(0), 0, data);
-    }
-
-    function test_ExecuteBatch_ExecutesAllCallsAtomically() public {
-        usdc.mint(address(account), 1000e6);
-
-        address[] memory dest = new address[](2);
-        uint256[] memory value = new uint256[](2);
-        bytes[] memory data = new bytes[](2);
-
-        dest[0] = address(usdc);
-        value[0] = 0;
-
-        data[0] = abi.encodeCall(usdc.transfer, (attacker, 200e6));
-        dest[1] = address(usdc);
-
-        value[1] = 0;
-        data[1] = abi.encodeCall(usdc.transfer, (attacker, 300e6));
-
-        vm.prank(owner);
-        account.executeBatch(dest, value, data);
-
-        assertEq(usdc.balanceOf(attacker), 500e6);
-    }
-
-    function test_RevertWhen_ExecuteBatchCalledByStranger() public {
-        address[] memory dest = new address[](1);
-        uint256[] memory value = new uint256[](1);
-        bytes[] memory data = new bytes[](1);
-
-        dest[0] = address(usdc);
-
-        vm.prank(attacker);
-        vm.expectRevert();
-        account.executeBatch(dest, value, data);
-    }
-
-    function test_RevertWhen_ExecuteBatchArrayLengthsMismatch() public {
-        address[] memory dest = new address[](2);
-        uint256[] memory value = new uint256[](1); // mismatch
-        bytes[] memory data = new bytes[](2);
-
-        vm.prank(owner);
-        vm.expectRevert(MozaikAccount.ArrayLengthMismatch.selector);
-        account.executeBatch(dest, value, data);
-    }
-
-    function test_ValidateUserOp_SuccessForOwnerSignature() public {
+    function test_ValidateUserOp_ValidSpendingKey() public {
         PackedUserOperation memory op = _buildUserOp(address(account), "");
-        op = _signUserOp(op, ownerKey);
+        op = _signSpendingUserOp(op, spendingSignerKey);
 
         vm.prank(ENTRY_POINT_V09);
         uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
@@ -131,11 +89,20 @@ contract MozaikAccountTest is BaseTest {
         assertEq(result, SIG_VALIDATION_SUCCESS);
     }
 
-    function test_ValidateUserOp_FailedForWrongKey() public {
-        (, uint256 wrongKey) = makeAddrAndKey("wrong");
-
+    function test_ValidateUserOp_ValidRecoveryKey() public {
         PackedUserOperation memory op = _buildUserOp(address(account), "");
-        op = _signUserOp(op, wrongKey);
+        op = _signRecoveryUserOp(op, recoverySignerKey);
+
+        vm.prank(ENTRY_POINT_V09);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        assertEq(result, SIG_VALIDATION_SUCCESS);
+    }
+
+    function test_ValidateUserOp_InvalidKey() public {
+        (, uint256 wrongKey) = makeAddrAndKey("wrong");
+        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        op = _signSpendingUserOp(op, wrongKey);
 
         vm.prank(ENTRY_POINT_V09);
         uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
@@ -143,7 +110,27 @@ contract MozaikAccountTest is BaseTest {
         assertEq(result, SIG_VALIDATION_FAILED);
     }
 
-    function test_RevertWhen_ValidateUserOpCalledByNonEntryPoint() public {
+    function test_ValidateUserOp_InvalidSigType() public {
+        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        op.signature = abi.encodePacked(uint8(0xFF), bytes32(0), bytes32(0), uint8(27));
+
+        vm.prank(ENTRY_POINT_V09);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        assertEq(result, SIG_VALIDATION_FAILED);
+    }
+
+    function test_ValidateUserOp_InvalidSigLength() public {
+        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        op.signature = abi.encodePacked(uint8(0x00), bytes32(0), bytes32(0)); // 65 bytes, not 66
+
+        vm.prank(ENTRY_POINT_V09);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        assertEq(result, SIG_VALIDATION_FAILED);
+    }
+
+    function test_ValidateUserOp_CallByNonEntryPoint() public {
         PackedUserOperation memory op = _buildUserOp(address(account), "");
 
         vm.prank(attacker);
@@ -151,87 +138,68 @@ contract MozaikAccountTest is BaseTest {
         account.validateUserOp(op, bytes32(0), 0);
     }
 
-    function testFuzz_ValidateUserOp_RejectsArbitrarySignature(bytes memory sig) public {
-        PackedUserOperation memory op = _buildUserOp(address(account), "");
-        op.signature = sig;
+    function test_RotateSpendingSigner_ValidCall() public {
+        address newSpendingSigner = makeAddr("newSpendingSigner");
 
-        // validateUserOp must never revert (uses tryRecover internally).
-        vm.prank(ENTRY_POINT_V09);
-        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+        vm.prank(recoverySigner);
+        account.rotateSpendingSigner(newSpendingSigner);
 
-        assertNotEq(result, SIG_VALIDATION_SUCCESS);
+        assertEq(account.spendingSigner(), newSpendingSigner);
     }
 
-    function test_IsValidSignature_ReturnsMagicValueForOwnerSig() public view {
-        bytes32 hash = keccak256("hello");
-        bytes32 digest = _erc1271Digest(address(account), hash);
-
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(ownerKey, digest);
-        bytes memory sig = abi.encodePacked(r, s, v);
-
-        bytes4 result = account.isValidSignature(hash, sig);
-
-        assertEq(result, IERC1271.isValidSignature.selector);
+    function test_RotateSpendingSigner_InvalidCallBySpending() public {
+        vm.prank(spendingSigner);
+        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, spendingSigner));
+        account.rotateSpendingSigner(makeAddr("new"));
     }
 
-    function test_IsValidSignature_ReturnsFallbackForNonOwnerSig() public {
-        bytes32 hash = keccak256("hello");
-        bytes32 digest = _erc1271Digest(address(account), hash);
-        (, uint256 wrongKey) = makeAddrAndKey("nonowner");
-
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongKey, digest);
-        bytes memory sig = abi.encodePacked(r, s, v);
-
-        bytes4 result = account.isValidSignature(hash, sig);
-        assertEq(result, bytes4(0xffffffff));
-    }
-
-    /**
-     * Compute the EIP-712 digest that isValidSignature expects callers to sign.
-     * Mirrors the contract's wrapping: \x19\x01 || domainSeparator(account) || MozaikMessage(hash).
-     */
-    function _erc1271Digest(address accountAddr, bytes32 hash) private view returns (bytes32) {
-        bytes32 domainSeparator = keccak256(
-            abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("MozaikAccount"),
-                keccak256("1"),
-                block.chainid,
-                accountAddr
-            )
-        );
-
-        bytes32 structHash = keccak256(abi.encode(keccak256("MozaikMessage(bytes32 hash)"), hash));
-
-        return keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
-    }
-
-    function test_UpgradeToAndCall_SucceedsForOwner() public {
-        MozaikAccount newImpl = new MozaikAccount();
-
-        vm.prank(owner);
-        account.upgradeToAndCall(address(newImpl), "");
-
-        // Verify ERC1967 implementation slot updated
-        bytes32 slot = bytes32(uint256(keccak256("eip1967.proxy.implementation")) - 1);
-        address stored = address(uint160(uint256(vm.load(address(account), slot))));
-
-        assertEq(stored, address(newImpl));
-    }
-
-    function test_RevertWhen_UpgradeCalledByStranger() public {
-        MozaikAccount newImpl = new MozaikAccount();
-
+    function test_RotateSpendingSigner_InvalidCallByRandom() public {
         vm.prank(attacker);
-        vm.expectRevert();
-        account.upgradeToAndCall(address(newImpl), "");
+        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, attacker));
+        account.rotateSpendingSigner(attacker);
     }
 
-    function test_Receive_AcceptsETH() public {
-        uint256 balanceBefore = address(account).balance;
-        (bool ok,) = address(account).call{value: 0.1 ether}("");
+    function test_RotateSpendingSigner_ValidRotation() public {
+        address newSpendingSigner = makeAddr("newSpendingSigner");
+        bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (newSpendingSigner));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
+        op = _signRecoveryUserOp(op, recoverySignerKey);
 
-        assertTrue(ok);
-        assertEq(address(account).balance, balanceBefore + 0.1 ether);
+        vm.prank(ENTRY_POINT_V09);
+        account.validateUserOp(op, _userOpHash(op), 0);
+
+        vm.prank(ENTRY_POINT_V09);
+        account.rotateSpendingSigner(newSpendingSigner);
+
+        assertEq(account.spendingSigner(), newSpendingSigner);
+    }
+
+    function test_RotateSpendingSigner_InvalidSpendingRotate() public {
+        address newSpendingSigner = makeAddr("newSpendingSigner");
+        bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (newSpendingSigner));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
+        op = _signSpendingUserOp(op, spendingSignerKey);
+
+        vm.prank(ENTRY_POINT_V09);
+        account.validateUserOp(op, _userOpHash(op), 0);
+
+        vm.prank(ENTRY_POINT_V09);
+        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, ENTRY_POINT_V09));
+        account.rotateSpendingSigner(newSpendingSigner);
+    }
+
+    function test_RotateRecoverySigner_ValidCall() public {
+        address newRecoverySigner = makeAddr("newRecoverySigner");
+
+        vm.prank(recoverySigner);
+        account.rotateRecoverySigner(newRecoverySigner);
+
+        assertEq(account.recoverySigner(), newRecoverySigner);
+    }
+
+    function test_RotateRecoverySigner_InvalidCallBySpending() public {
+        vm.prank(spendingSigner);
+        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, spendingSigner));
+        account.rotateRecoverySigner(makeAddr("new"));
     }
 }

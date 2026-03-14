@@ -11,20 +11,18 @@ contract FundPaymasterScript is Script {
     function run() external {
         address paymasterAddr = vm.envAddress("PAYMASTER_ADDRESS");
         uint256 depositAmount = vm.envUint("DEPOSIT_AMOUNT_WEI");
-        address funder = vm.envAddress("DEPLOYER_ADDRESS");
 
         MozaikVerifyingPaymaster paymaster = MozaikVerifyingPaymaster(payable(paymasterAddr));
-        IEntryPoint entryPoint = IEntryPoint(ENTRY_POINT_V09);
 
-        vm.startBroadcast(funder);
+        vm.startBroadcast();
         paymaster.deposit{value: depositAmount}();
         vm.stopBroadcast();
 
-        uint256 balance = entryPoint.balanceOf(paymasterAddr);
+        uint256 balance = IEntryPoint(ENTRY_POINT_V09).balanceOf(paymasterAddr);
         require(balance >= depositAmount, "Deposit not reflected in EntryPoint");
 
-        console.log("Paymaster:         ", paymasterAddr);
-        console.log("Deposit amount:    ", depositAmount);
-        console.log("EntryPoint balance:", balance);
+        console.log("Paymaster:      ", paymasterAddr);
+        console.log("Deposited (wei):", depositAmount);
+        console.log("EP balance:     ", balance);
     }
 }

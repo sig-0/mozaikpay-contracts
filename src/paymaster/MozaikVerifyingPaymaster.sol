@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {BasePaymaster} from "account-abstraction/core/BasePaymaster.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
@@ -10,135 +9,79 @@ import {UserOperationLib} from "account-abstraction/core/UserOperationLib.sol";
 import {_packValidationData} from "account-abstraction/core/Helpers.sol";
 
 /**
- * @notice Mozaik Pay verifying paymaster: sponsors gas for users based on an off-chain backend signature.
+ * @title MozaikVerifyingPaymaster
+ * @notice ERC-4337 paymaster that sponsors gas for Mozaik Pay users based on a short-lived
+ *         off-chain signature from the Mozaik Pay backend.
+ * @dev The backend (sponsor key) enforces Mozaik Pay's own sponsorship policy off-chain and
+ *      issues a per-operation approval valid for a fixed time window. The paymaster verifies
+ *      that approval on-chain before agreeing to pay for gas.
  *
- * In ERC-4337, a paymaster is a contract that pays for a UserOp's gas instead of the account itself.
- * This is the "verifying" variant: before approving sponsorship the paymaster verifies an ECDSA
- * signature from a trusted backend key (verifyingSigner). The backend enforces Mozaik Pay's own policy
- * (rate limits, etc.) off-chain and issues a short-lived, per-operation approval.
+ *      The approval digest binds to: this contract's address, chainId, the sender account,
+ *      the account nonce, the exact callData, the gas limits, and the time window. This
+ *      prevents replay, cross-chain reuse, gas inflation by a bundler, and sponsorship of
+ *      operations the backend did not explicitly approve.
  *
- * Flow:
- *   1. User builds a UserOp and sends it to the Mozaik Pay backend.
- *   2. Backend validates eligibility, signs a SponsoredOp struct covering sender + nonce + time window.
- *   3. Backend appends the signature to paymasterAndData and returns the complete UserOp.
- *   4. Bundler submits the UserOp to the EntryPoint.
- *   5. EntryPoint calls validatePaymasterUserOp (via BasePaymaster) which verifies the backend signature.
- *   6. On success, EntryPoint deducts the gas cost from this contract's ETH deposit.
- *
- * Inheritance:
- *   - BasePaymaster (ERC-4337) Provides the public validatePaymasterUserOp / postOp entry points
- *                              (EntryPoint-only gated), plus deposit / withdrawTo / getDeposit helpers
- *                              and Ownable2Step for ownership management.
- *   - EIP712        (OZ)       Provides _hashTypedDataV4 for typed-data signing. Domain name is
- *                              "MozaikPaymaster" so backend signatures cannot be replayed against
- *                              the account's isValidSignature (different domain separator).
+ *      Ownership (for sponsor rotation and ETH withdrawals) is inherited via BasePaymaster.
  */
-contract MozaikVerifyingPaymaster is BasePaymaster, EIP712 {
-    using UserOperationLib for PackedUserOperation;
-    using UserOperationLib for bytes;
+contract MozaikVerifyingPaymaster is BasePaymaster {
+    /**
+     * @notice The hot-wallet address whose ECDSA signature authorises gas sponsorship.
+     * @dev Rotatable by the owner via setSponsor. The backend signs with the corresponding
+     *      private key and embeds the signature in paymasterAndData.
+     */
+    address public sponsor;
 
     /**
-     * @notice The hot-wallet address whose ECDSA signature approves gas sponsorship.
-     * @dev    Rotatable by the owner via setVerifyingSigner. Should be a dedicated key.
+     * @notice Emitted when the sponsor address is updated.
+     * @param oldSponsor The previous sponsor address.
+     * @param newSponsor The new sponsor address.
      */
-    address public verifyingSigner;
+    event SponsorUpdated(address indexed oldSponsor, address indexed newSponsor);
 
     /**
-     * @notice Layout of the paymaster-specific section of paymasterAndData (after the 52-byte header).
-     * @dev    The ERC-4337 paymasterAndData field is structured as:
-     *           [0  : 20] paymaster address           (static, set by bundler/SDK)
-     *           [20 : 36] paymasterValidationGasLimit (16 bytes)
-     *           [36 : 52] paymasterPostOpGasLimit     (16 bytes)
-     *           -- PAYMASTER_DATA_OFFSET = 52 --
-     *           [52 : 58] validUntil                  (uint48, 6 bytes) <- our data starts here
-     *           [58 : 64] validAfter                  (uint48, 6 bytes)
-     *           [64 : end] ECDSA signature            (magic-suffixed, see UserOperationLib)
-     *
-     *         The paymaster signature is appended at the end with a magic sentinel so the EntryPoint
-     *         can distinguish what the user signed (the full UserOp hash) from what the paymaster
-     *         added (the approval signature). The user's signature covers paymasterAndData up to but
-     *         not including the paymaster signature.
+     * @notice Thrown when a zero address is supplied where one is not permitted.
      */
+    error ZeroAddress();
 
     /**
-     * @notice EIP-712 struct type hash for the approval the backend signs.
-     * @dev    SponsoredOp binds the approval to:
-     *           - sender:     the specific account being sponsored (not transferable to other users)
-     *           - nonce:      the EntryPoint's per-sender nonce; prevents replaying an approval at a
-     *                         different operation index
-     *           - validUntil: expiry timestamp (0 = no expiry)
-     *           - validAfter: not-before timestamp (0 = no constraint); for scheduled operations
+     * @param _entryPoint The ERC-4337 EntryPoint this paymaster is staked with.
+     * @param _sponsor    The initial backend signing address.
      */
-    bytes32 private constant SPONSORED_OP_TYPEHASH =
-        keccak256("SponsoredOp(address sender,uint256 nonce,uint48 validUntil,uint48 validAfter)");
+    constructor(IEntryPoint _entryPoint, address _sponsor) BasePaymaster(_entryPoint, msg.sender) {
+        if (_sponsor == address(0)) revert ZeroAddress();
 
-    /**
-     * @notice Emitted when the verifying signer is rotated.
-     * @param oldSigner The previous signer address.
-     * @param newSigner The new signer address.
-     */
-    event VerifyingSignerUpdated(address indexed oldSigner, address indexed newSigner);
-
-    /**
-     * @notice Thrown when address(0) is passed as the verifying signer.
-     */
-    error InvalidSignerAddress();
-
-    /**
-     * @notice Deploys the paymaster, registering it with the EntryPoint and setting initial state.
-     * @dev    BasePaymaster validates that _entryPoint implements the correct IEntryPoint interface
-     *         (ERC-165 check) and stores it as an immutable. EIP712 seeds the domain separator
-     *         immutables for "MozaikPaymaster" v1.
-     * @param _entryPoint      The canonical ERC-4337 EntryPoint for this chain.
-     * @param _verifyingSigner The backend hot-wallet address that signs SponsoredOp approvals.
-     * @param _owner           The address that will own this contract (can rotate signer, withdraw).
-     */
-    constructor(IEntryPoint _entryPoint, address _verifyingSigner, address _owner)
-        BasePaymaster(_entryPoint, _owner)
-        EIP712("MozaikPaymaster", "1")
-    {
-        if (_verifyingSigner == address(0)) revert InvalidSignerAddress();
-
-        verifyingSigner = _verifyingSigner;
+        sponsor = _sponsor;
     }
 
     /**
-     * @notice Rotate the backend signing key.
-     * @dev    Only callable by the owner.
-     * @param newSigner The replacement signer address.
+     * @notice Replaces the sponsor address. Used to rotate the backend signing key.
+     * @param newSponsor The new sponsor address.
      */
-    function setVerifyingSigner(address newSigner) external onlyOwner {
-        if (newSigner == address(0)) revert InvalidSignerAddress();
+    function setSponsor(address newSponsor) external onlyOwner {
+        if (newSponsor == address(0)) revert ZeroAddress();
 
-        emit VerifyingSignerUpdated(verifyingSigner, newSigner);
+        emit SponsorUpdated(sponsor, newSponsor);
 
-        verifyingSigner = newSigner;
+        sponsor = newSponsor;
     }
 
     /**
-     * @notice Core paymaster logic: verify the approval signature and return the validity window.
-     * @dev    Called by BasePaymaster.validatePaymasterUserOp after confirming the caller is the
-     *         EntryPoint. Must not revert, as the EntryPoint expects a return value even on failure.
+     * @dev Validates the backend's sponsorship approval embedded in paymasterAndData.
      *
-     *         Steps:
-     *           1. Slice validUntil and validAfter from paymasterAndData[52:64].
-     *           2. Extract the ECDSA signature from the magic-suffixed end of paymasterAndData.
-     *           3. Build the EIP-712 digest over SponsoredOp(sender, nonce, validUntil, validAfter).
-     *           4. Recover the signer; set sigFailed = true if recovery fails or signer doesn't match.
-     *           5. Pack and return (empty context, validationData) where validationData encodes
-     *              the sig result and the validity timestamps for the EntryPoint to enforce.
+     *      paymasterAndData layout (after the standard 52-byte EntryPoint header):
+     *        validUntil (6 bytes) || validAfter (6 bytes) || sig (65 bytes) || uint16(65) || MAGIC (8 bytes)
      *
-     *         Empty context means _postOp will not be invoked with meaningful data; no cleanup needed.
+     *      userOpHash and maxCost are intentionally ignored: the digest is constructed
+     *      over only the fields the backend commits to (see _paymasterDigest), and
+     *      Mozaik Pay sponsors unconditionally with no per-op cost cap.
      *
-     * @param userOp  The packed UserOperation. Only sender and nonce are read from it.
-     * @return context        Empty bytes. No post-operation work needed.
-     * @return validationData Packed uint256: sig-failed flag (bit 0), validUntil (bits 160-207),
-     *                        validAfter (bits 208-255). Format defined by ERC-4337.
+     *      Never reverts - a bad signature returns sigFailed=true which the EntryPoint
+     *      treats as a validation failure without reverting the bundle.
      */
     function _validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
-        bytes32, // userOpHash
-        uint256 // maxCost
+        bytes32, // userOpHash - not used; we build our own digest
+        uint256 // maxCost   - not used; Mozaik Pay sponsors unconditionally
     )
         internal
         view
@@ -153,22 +96,47 @@ contract MozaikVerifyingPaymaster is BasePaymaster, EIP712 {
 
         bytes calldata pmSig = UserOperationLib.getPaymasterSignature(paymasterAndData);
 
-        bytes32 digest = _hashTypedDataV4(
-            keccak256(abi.encode(SPONSORED_OP_TYPEHASH, userOp.sender, userOp.nonce, validUntil, validAfter))
-        );
+        bytes32 digest = _paymasterDigest(userOp, validUntil, validAfter);
 
-        (address recovered, ECDSA.RecoverError err, bytes32 errArg) = ECDSA.tryRecover(digest, pmSig);
-
-        bool sigFailed = err != ECDSA.RecoverError.NoError || errArg != bytes32(0) || recovered != verifyingSigner;
+        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(digest, pmSig);
+        bool sigFailed = err != ECDSA.RecoverError.NoError || recovered != sponsor;
 
         return ("", _packValidationData(sigFailed, validUntil, validAfter));
     }
 
     /**
-     * @notice Post-operation hook, left intentionally empty.
-     * @dev    Required override because BasePaymaster._postOp reverts with MustOverride() by default,
-     *         assuming any non-empty context needs cleanup. We return empty context from
-     *         _validatePaymasterUserOp so this is never called with meaningful data.
+     * @dev Constructs the digest the backend must sign to approve sponsorship of a UserOp.
+     *
+     *      Binds to:
+     *        - address(this)             -  prevents use on a different paymaster
+     *        - block.chainid             -  prevents cross-chain replay
+     *        - userOp.sender             -  approves a specific account
+     *        - userOp.nonce              -  approves a single operation (EntryPoint enforces uniqueness)
+     *        - keccak256(userOp.callData) -  approves a specific operation, not arbitrary calls
+     *        - userOp.accountGasLimits   -  prevents a bundler from inflating gas limits
+     *        - userOp.preVerificationGas -  included for the same reason
+     *        - userOp.gasFees            -  prevents a bundler from inflating the fee cap
+     *        - validUntil / validAfter   -  constrains the approval to a time window
+     *
      */
-    function _postOp(PostOpMode, bytes calldata, uint256, uint256) internal pure override {}
+    function _paymasterDigest(PackedUserOperation calldata userOp, uint48 validUntil, uint48 validAfter)
+        private
+        view
+        returns (bytes32)
+    {
+        return keccak256(
+            abi.encode(
+                address(this),
+                block.chainid,
+                userOp.sender,
+                userOp.nonce,
+                keccak256(userOp.callData),
+                userOp.accountGasLimits,
+                userOp.preVerificationGas,
+                userOp.gasFees,
+                validUntil,
+                validAfter
+            )
+        );
+    }
 }

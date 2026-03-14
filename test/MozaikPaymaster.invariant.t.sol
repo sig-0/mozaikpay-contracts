@@ -11,10 +11,6 @@ import {MozaikVerifyingPaymaster} from "../src/paymaster/MozaikVerifyingPaymaste
 
 contract PaymasterHandler is Test {
     bytes8 internal constant PAYMASTER_SIG_MAGIC = 0x22e325a297439656;
-    bytes32 internal constant SPONSORED_OP_TYPEHASH =
-        keccak256("SponsoredOp(address sender,uint256 nonce,uint48 validUntil,uint48 validAfter)");
-    bytes32 internal constant EIP712_TYPE_HASH =
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
     EntryPoint public entryPoint;
     MozaikVerifyingPaymaster public paymaster;
@@ -36,7 +32,7 @@ contract PaymasterHandler is Test {
 
         entryPoint = new EntryPoint();
         factory = new MozaikAccountFactory(IEntryPoint(address(entryPoint)));
-        paymaster = new MozaikVerifyingPaymaster(IEntryPoint(address(entryPoint)), verifyingSignerAddr, address(this));
+        paymaster = new MozaikVerifyingPaymaster(IEntryPoint(address(entryPoint)), verifyingSignerAddr);
 
         vm.deal(address(this), 100 ether);
     }
@@ -64,23 +60,34 @@ contract PaymasterHandler is Test {
     function sponsorOp(address owner, uint48 validUntil) external {
         validUntil = uint48(bound(validUntil, block.timestamp + 1, type(uint48).max));
 
-        address sender = factory.getAddress(owner);
+        owner = address(uint160(bound(uint256(uint160(owner)), 1, type(uint160).max)));
+        address sender = factory.computeAddress(owner, owner);
 
-        bytes32 domainSep = keccak256(
+        PackedUserOperation memory op;
+        op.sender = sender;
+        op.accountGasLimits = bytes32(abi.encodePacked(uint128(200_000), uint128(200_000)));
+        op.preVerificationGas = 50_000;
+        op.gasFees = bytes32(abi.encodePacked(uint128(1 gwei), uint128(2 gwei)));
+
+        bytes32 digest = keccak256(
             abi.encode(
-                EIP712_TYPE_HASH, keccak256("MozaikPaymaster"), keccak256("1"), block.chainid, address(paymaster)
+                address(paymaster),
+                block.chainid,
+                op.sender,
+                op.nonce,
+                keccak256(op.callData),
+                op.accountGasLimits,
+                op.preVerificationGas,
+                op.gasFees,
+                validUntil,
+                uint48(0)
             )
         );
-
-        bytes32 structHash = keccak256(abi.encode(SPONSORED_OP_TYPEHASH, sender, uint256(0), validUntil, uint48(0)));
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(verifyingSignerKey, digest);
 
         bytes memory sig = abi.encodePacked(r, s, v);
 
-        PackedUserOperation memory op;
-        op.sender = sender;
         op.paymasterAndData = abi.encodePacked(
             address(paymaster),
             uint128(100_000),
@@ -101,21 +108,33 @@ contract PaymasterHandler is Test {
     function submitExpiredOp(address owner) external {
         uint48 expired = 0; // validUntil = 0 is always in the past
 
-        address sender = factory.getAddress(owner);
+        owner = address(uint160(bound(uint256(uint160(owner)), 1, type(uint160).max)));
+        address sender = factory.computeAddress(owner, owner);
 
-        bytes32 domainSep = keccak256(
+        PackedUserOperation memory op;
+        op.sender = sender;
+        op.accountGasLimits = bytes32(abi.encodePacked(uint128(200_000), uint128(200_000)));
+        op.preVerificationGas = 50_000;
+        op.gasFees = bytes32(abi.encodePacked(uint128(1 gwei), uint128(2 gwei)));
+
+        bytes32 digest = keccak256(
             abi.encode(
-                EIP712_TYPE_HASH, keccak256("MozaikPaymaster"), keccak256("1"), block.chainid, address(paymaster)
+                address(paymaster),
+                block.chainid,
+                op.sender,
+                op.nonce,
+                keccak256(op.callData),
+                op.accountGasLimits,
+                op.preVerificationGas,
+                op.gasFees,
+                expired,
+                uint48(0)
             )
         );
-        bytes32 structHash = keccak256(abi.encode(SPONSORED_OP_TYPEHASH, sender, uint256(0), expired, uint48(0)));
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(verifyingSignerKey, digest);
         bytes memory sig = abi.encodePacked(r, s, v);
 
-        PackedUserOperation memory op;
-        op.sender = sender;
         op.paymasterAndData = abi.encodePacked(
             address(paymaster),
             uint128(100_000),
@@ -138,7 +157,8 @@ contract PaymasterHandler is Test {
     }
 
     function submitUnsignedOp(address owner) external {
-        address sender = factory.getAddress(owner);
+        owner = address(uint160(bound(uint256(uint160(owner)), 1, type(uint160).max)));
+        address sender = factory.computeAddress(owner, owner);
 
         PackedUserOperation memory op;
         op.sender = sender;

@@ -7,21 +7,20 @@ import {MozaikVerifyingPaymaster} from "../src/paymaster/MozaikVerifyingPaymaste
 contract TransferOwnershipScript is Script {
     function run() external {
         address paymasterAddr = vm.envAddress("PAYMASTER_ADDRESS");
-        address multisig = vm.envAddress("MULTISIG_ADDRESS");
-        address currentOwner = vm.envAddress("DEPLOYER_ADDRESS");
+        address newOwner = vm.envAddress("NEW_OWNER_ADDRESS");
 
         MozaikVerifyingPaymaster paymaster = MozaikVerifyingPaymaster(payable(paymasterAddr));
 
-        vm.startBroadcast(currentOwner);
-        paymaster.transferOwnership(multisig);
+        vm.startBroadcast();
+        paymaster.transferOwnership(newOwner);
         vm.stopBroadcast();
 
-        // Ownership in Ownable2Step is pending until the new owner accepts.
-        address pending = paymaster.pendingOwner();
-        require(pending == multisig, "Ownership transfer not initiated");
+        // Ownable2Step: ownership is pending until the new owner calls acceptOwnership().
+        require(paymaster.pendingOwner() == newOwner, "Ownership transfer not initiated");
 
-        console.log("Paymaster:          ", paymasterAddr);
-        console.log("Pending owner:      ", pending);
-        console.log("(New owner must call acceptOwnership() to complete transfer)");
+        console.log("Paymaster:      ", paymasterAddr);
+        console.log("Current owner:  ", paymaster.owner());
+        console.log("Pending owner:  ", paymaster.pendingOwner());
+        console.log("New owner must call acceptOwnership() to complete the transfer.");
     }
 }

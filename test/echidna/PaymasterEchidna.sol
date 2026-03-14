@@ -8,11 +8,6 @@ import {MozaikVerifyingPaymaster} from "../../src/paymaster/MozaikVerifyingPayma
 
 contract PaymasterEchidna {
     bytes8 internal constant PAYMASTER_SIG_MAGIC = 0x22e325a297439656;
-    bytes32 internal constant SPONSORED_OP_TYPEHASH =
-        keccak256("SponsoredOp(address sender,uint256 nonce,uint48 validUntil,uint48 validAfter)");
-    bytes32 internal constant EIP712_TYPE_HASH =
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-
     EntryPoint internal entryPoint;
     MozaikVerifyingPaymaster internal paymaster;
 
@@ -25,7 +20,7 @@ contract PaymasterEchidna {
     constructor() payable {
         SIGNER_ADDR = _ecrecover(0);
         entryPoint = new EntryPoint();
-        paymaster = new MozaikVerifyingPaymaster(IEntryPoint(address(entryPoint)), _signerAddress(), address(this));
+        paymaster = new MozaikVerifyingPaymaster(IEntryPoint(address(entryPoint)), _signerAddress());
     }
 
     function echidna_unsigned_op_never_sponsored() external returns (bool) {

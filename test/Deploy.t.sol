@@ -14,8 +14,7 @@ contract DeployScriptTest is BaseTest {
         super.setUp();
 
         deployedFactory = new MozaikAccountFactory(IEntryPoint(address(localEntryPoint)));
-        deployedPaymaster =
-            new MozaikVerifyingPaymaster(IEntryPoint(address(localEntryPoint)), verifyingSignerAddr, address(this));
+        deployedPaymaster = new MozaikVerifyingPaymaster(IEntryPoint(address(localEntryPoint)), verifyingSignerAddr);
     }
 
     function test_Deploy_FactoryAddressNonZero() public view {
@@ -30,8 +29,9 @@ contract DeployScriptTest is BaseTest {
         assertTrue(address(deployedFactory.ACCOUNT_IMPLEMENTATION()) != address(0));
     }
 
-    function test_Deploy_GetAddressNonZero() public view {
-        address counterfactual = deployedFactory.getAddress(address(1));
+    function test_Deploy_ComputeAddressNonZero() public view {
+        address counterfactual = deployedFactory.computeAddress(address(1), address(2));
+
         assertTrue(counterfactual != address(0));
     }
 
@@ -40,6 +40,6 @@ contract DeployScriptTest is BaseTest {
     }
 
     function test_Deploy_VerifyingSignerIsCorrect() public view {
-        assertEq(deployedPaymaster.verifyingSigner(), verifyingSignerAddr);
+        assertEq(deployedPaymaster.sponsor(), verifyingSignerAddr);
     }
 }

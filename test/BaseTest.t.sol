@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EntryPoint} from "account-abstraction/core/EntryPoint.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
@@ -19,52 +20,53 @@ abstract contract BaseTest is Test {
         "PackedUserOperation(address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData)"
     );
 
-    bytes32 internal constant SPONSORED_OP_TYPEHASH =
-        keccak256("SponsoredOp(address sender,uint256 nonce,uint48 validUntil,uint48 validAfter)");
-
-    bytes32 internal constant EIP712_TYPE_HASH =
-        keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
-
     ERC20Mock internal usdc;
     EntryPoint internal localEntryPoint;
     MozaikAccount internal accountImpl;
     MozaikAccountFactory internal factory;
     MozaikVerifyingPaymaster internal paymaster;
 
+    // spending signer (secp256k1 device key)
+    address internal spendingSigner;
+    uint256 internal spendingSignerKey;
+
+    address internal recoverySigner;
+    uint256 internal recoverySignerKey;
+
     address internal owner;
     uint256 internal ownerKey;
+
     address internal verifyingSignerAddr;
     uint256 internal verifyingSignerKey;
     address internal attacker;
 
     function setUp() public virtual {
-        (owner, ownerKey) = makeAddrAndKey("owner");
+        (spendingSigner, spendingSignerKey) = makeAddrAndKey("spendingSigner");
+        (recoverySigner, recoverySignerKey) = makeAddrAndKey("recoverySigner");
 
+        (owner, ownerKey) = (spendingSigner, spendingSignerKey);
         (verifyingSignerAddr, verifyingSignerKey) = makeAddrAndKey("verifyingSigner");
-
         attacker = makeAddr("attacker");
 
         usdc = new ERC20Mock();
-
-        // Deploy a real local EntryPoint so factory gets a valid senderCreator
         localEntryPoint = new EntryPoint();
-
         factory = new MozaikAccountFactory(IEntryPoint(address(localEntryPoint)));
-
-        paymaster =
-            new MozaikVerifyingPaymaster(IEntryPoint(address(localEntryPoint)), verifyingSignerAddr, address(this));
-
+        paymaster = new MozaikVerifyingPaymaster(IEntryPoint(address(localEntryPoint)), verifyingSignerAddr);
         accountImpl = factory.ACCOUNT_IMPLEMENTATION();
 
         vm.deal(owner, 10 ether);
         vm.deal(attacker, 1 ether);
     }
 
-    function _deployAccount(address _owner) internal returns (MozaikAccount acct) {
+    function _deployAccount(address _spendingSigner, address _recoverySigner) internal returns (MozaikAccount acct) {
         address senderCreator = address(localEntryPoint.senderCreator());
 
         vm.prank(senderCreator);
-        acct = factory.createAccount(_owner);
+        acct = factory.createAccount(_spendingSigner, _recoverySigner);
+    }
+
+    function _deployAccount() internal returns (MozaikAccount acct) {
+        return _deployAccount(spendingSigner, recoverySigner);
     }
 
     function _buildUserOp(address sender, bytes memory callData) internal pure returns (PackedUserOperation memory op) {
@@ -79,7 +81,8 @@ abstract contract BaseTest is Test {
         op.signature = "";
     }
 
-    function _signUserOp(PackedUserOperation memory op, uint256 signerKey)
+    /// @notice Sign a UserOp with the spending key (0x00 prefix + 65-byte ECDSA).
+    function _signSpendingUserOp(PackedUserOperation memory op, uint256 signerKey)
         internal
         view
         returns (PackedUserOperation memory)
@@ -87,14 +90,25 @@ abstract contract BaseTest is Test {
         bytes32 userOpHash = _userOpHash(op);
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, userOpHash);
-
-        op.signature = abi.encodePacked(r, s, v);
+        op.signature = abi.encodePacked(uint8(0x00), r, s, v);
 
         return op;
     }
 
-    // Compute the EntryPoint v0.9 userOpHash for a given op.
-    // Assumes paymasterAndData does NOT contain the paymaster signature suffix yet
+    /// @notice Sign a UserOp with the recovery key (0x01 prefix + 65-byte ECDSA).
+    function _signRecoveryUserOp(PackedUserOperation memory op, uint256 signerKey)
+        internal
+        view
+        returns (PackedUserOperation memory)
+    {
+        bytes32 userOpHash = _userOpHash(op);
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, userOpHash);
+        op.signature = abi.encodePacked(uint8(0x01), r, s, v);
+
+        return op;
+    }
+
     function _userOpHash(PackedUserOperation memory op) internal view returns (bytes32) {
         bytes32 structHash = keccak256(
             abi.encode(
@@ -111,14 +125,24 @@ abstract contract BaseTest is Test {
         );
 
         bytes32 domainSep = keccak256(
-            abi.encode(EIP712_TYPE_HASH, keccak256("ERC4337"), keccak256("1"), block.chainid, ENTRY_POINT_V09)
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("ERC4337"),
+                keccak256("1"),
+                block.chainid,
+                ENTRY_POINT_V09
+            )
         );
 
         return keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
     }
 
-    // Build paymasterAndData (without signature), sign it, and return the complete
-    // paymasterAndData with signature appended as suffix
+    function _recoverSigner(bytes32 digest, bytes memory sig) internal pure returns (address) {
+        if (sig.length != 65) return address(0);
+
+        return ECDSA.recover(digest, sig);
+    }
+
     function _signPaymasterApproval(
         PackedUserOperation memory op,
         uint48 validUntil,
@@ -126,24 +150,30 @@ abstract contract BaseTest is Test {
         uint256 signerKey,
         address paymasterAddr
     ) internal view returns (bytes memory) {
-        bytes32 domainSep = keccak256(
-            abi.encode(EIP712_TYPE_HASH, keccak256("MozaikPaymaster"), keccak256("1"), block.chainid, paymasterAddr)
+        bytes32 digest = keccak256(
+            abi.encode(
+                paymasterAddr,
+                block.chainid,
+                op.sender,
+                op.nonce,
+                keccak256(op.callData),
+                op.accountGasLimits,
+                op.preVerificationGas,
+                op.gasFees,
+                validUntil,
+                validAfter
+            )
         );
 
-        bytes32 structHash = keccak256(abi.encode(SPONSORED_OP_TYPEHASH, op.sender, op.nonce, validUntil, validAfter));
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSep, structHash));
-
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, digest);
-
         bytes memory sig = abi.encodePacked(r, s, v);
 
-        // Suffix: sig || uint16(sig.length) || magic
         return abi.encodePacked(
-            paymasterAddr, // 20 bytes
-            uint128(100_000), // validationGasLimit (16 bytes)
-            uint128(0), // postOpGasLimit     (16 bytes)
-            validUntil, // 6 bytes
-            validAfter, // 6 bytes
+            paymasterAddr,
+            uint128(100_000),
+            uint128(0),
+            validUntil,
+            validAfter,
             sig,
             uint16(sig.length),
             PAYMASTER_SIG_MAGIC
