@@ -62,7 +62,7 @@ snapshot:
 
 .PHONY: slither
 slither:
-	slither src/ --filter-paths "lib/"
+	slither src/
 
 # Echidna suite
 # https://github.com/crytic/echidna
