@@ -46,14 +46,23 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
     address internal constant ENTRY_POINT_V09 = 0x433709009B8330FDa32311DF1C2AFA402eD8D009;
 
     /**
-     * @notice The key authorized to execute calls on behalf of this account.
+     * @dev ERC-7201 namespaced storage for MozaikAccount state.
+     *      Slot: keccak256(abi.encode(uint256(keccak256("mozaik.MozaikAccount")) - 1)) & ~bytes32(uint256(0xff))
      */
-    address public spendingSigner;
+    /// @custom:storage-location erc7201:mozaik.MozaikAccount
+    struct MozaikAccountStorage {
+        address spendingSigner;
+        address recoverySigner;
+    }
 
-    /**
-     * @notice The key authorized to rotate signers and authorize upgrades.
-     */
-    address public recoverySigner;
+    bytes32 private constant _MOZAIK_ACCOUNT_STORAGE_LOCATION =
+        0xde7593516e586b97e9201bf35c885cdde0d6f8f83f49a0ddd00230e192220c00;
+
+    function _getMozaikAccountStorage() private pure returns (MozaikAccountStorage storage $) {
+        assembly {
+            $.slot := _MOZAIK_ACCOUNT_STORAGE_LOCATION
+        }
+    }
 
     /**
      * @notice Emitted when the spending signer is replaced.
@@ -91,6 +100,20 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
     }
 
     /**
+     * @notice The key authorized to execute calls on behalf of this account.
+     */
+    function spendingSigner() public view returns (address) {
+        return _getMozaikAccountStorage().spendingSigner;
+    }
+
+    /**
+     * @notice The key authorized to rotate signers and authorize upgrades.
+     */
+    function recoverySigner() public view returns (address) {
+        return _getMozaikAccountStorage().recoverySigner;
+    }
+
+    /**
      * @notice Initialises the proxy with its two signers. Called once by the factory at deployment.
      * @param spender  The initial spending signer (device key).
      * @param recovery The initial recovery signer (backup key).
@@ -98,8 +121,9 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
     function initialize(address spender, address recovery) external initializer {
         if (spender == address(0) || recovery == address(0)) revert ZeroAddress();
 
-        spendingSigner = spender;
-        recoverySigner = recovery;
+        MozaikAccountStorage storage $ = _getMozaikAccountStorage();
+        $.spendingSigner = spender;
+        $.recoverySigner = recovery;
     }
 
     /**
@@ -118,8 +142,9 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
         _requireRecovery();
         if (newSpendingSigner == address(0)) revert ZeroAddress();
 
-        address previousSigner = spendingSigner;
-        spendingSigner = newSpendingSigner;
+        MozaikAccountStorage storage $ = _getMozaikAccountStorage();
+        address previousSigner = $.spendingSigner;
+        $.spendingSigner = newSpendingSigner;
 
         emit SpendingSignerRotated(previousSigner, newSpendingSigner);
     }
@@ -133,8 +158,9 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
         _requireRecovery();
         if (newRecoverySigner == address(0)) revert ZeroAddress();
 
-        address previousSigner = recoverySigner;
-        recoverySigner = newRecoverySigner;
+        MozaikAccountStorage storage $ = _getMozaikAccountStorage();
+        address previousSigner = $.recoverySigner;
+        $.recoverySigner = newRecoverySigner;
 
         emit RecoverySignerRotated(previousSigner, newRecoverySigner);
     }
@@ -165,10 +191,12 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
             return SIG_VALIDATION_FAILED;
         }
 
+        MozaikAccountStorage storage $ = _getMozaikAccountStorage();
+
         if (sigType == SIG_SPENDING) {
             (address spendingRecovered, ECDSA.RecoverError spendingErr,) = ECDSA.tryRecover(userOpHash, ecdsaSig);
 
-            if (spendingErr != ECDSA.RecoverError.NoError || spendingRecovered != spendingSigner) {
+            if (spendingErr != ECDSA.RecoverError.NoError || spendingRecovered != $.spendingSigner) {
                 return SIG_VALIDATION_FAILED;
             }
 
@@ -182,7 +210,7 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
         // Recovery signer
         (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(userOpHash, ecdsaSig);
 
-        if (err != ECDSA.RecoverError.NoError || recovered != recoverySigner) return SIG_VALIDATION_FAILED;
+        if (err != ECDSA.RecoverError.NoError || recovered != $.recoverySigner) return SIG_VALIDATION_FAILED;
 
         assembly {
             tstore(_TS_KEY_TYPE, 2)
@@ -209,7 +237,7 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
             revert UnauthorizedCaller(msg.sender);
         }
 
-        if (msg.sender == spendingSigner) return;
+        if (msg.sender == _getMozaikAccountStorage().spendingSigner) return;
 
         revert UnauthorizedCaller(msg.sender);
     }
@@ -232,7 +260,7 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
             revert UnauthorizedCaller(msg.sender);
         }
 
-        if (msg.sender == recoverySigner) return;
+        if (msg.sender == _getMozaikAccountStorage().recoverySigner) return;
 
         revert UnauthorizedCaller(msg.sender);
     }

@@ -166,7 +166,7 @@ contract UserOpFlowTest is BaseTest {
         assertEq(forkEp.getNonce(address(acct), 0), nonce + 1);
     }
 
-    function test_CounterfactualAddress_BalancePreservedOnDeploy() public onlyFork {
+    function test_StableAddress_BalancePreservedOnDeploy() public onlyFork {
         _setupFork();
 
         address expectedAddr = forkFactory.computeAddress(spendingSigner, recoverySigner);

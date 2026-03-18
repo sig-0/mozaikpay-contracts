@@ -202,4 +202,14 @@ contract MozaikAccountTest is BaseTest {
         vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, spendingSigner));
         account.rotateRecoverySigner(makeAddr("new"));
     }
+
+    function test_StorageLayout_ERC7201() public view {
+        bytes32 slot = keccak256(abi.encode(uint256(keccak256("mozaik.MozaikAccount")) - 1)) & ~bytes32(uint256(0xff));
+
+        address storedSpending = address(uint160(uint256(vm.load(address(account), slot))));
+        address storedRecovery = address(uint160(uint256(vm.load(address(account), bytes32(uint256(slot) + 1)))));
+
+        assertEq(storedSpending, spendingSigner);
+        assertEq(storedRecovery, recoverySigner);
+    }
 }
