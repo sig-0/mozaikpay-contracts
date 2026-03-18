@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {SIG_VALIDATION_SUCCESS, SIG_VALIDATION_FAILED} from "account-abstraction/core/Helpers.sol";
+import {BaseAccount} from "account-abstraction/core/BaseAccount.sol";
 
 import {BaseTest} from "./BaseTest.t.sol";
 import {MozaikAccount} from "../src/account/MozaikAccount.sol";
@@ -55,10 +56,15 @@ contract MozaikAccountTest is BaseTest {
         assertEq(usdc.balanceOf(attacker), 100e6);
     }
 
-    function test_Account_InvalidUserOpExecute() public {
+    function test_Account_EntryPointCanCallExecute() public {
+        usdc.mint(address(account), 1000e6);
+
+        // EntryPoint is trusted by _requireForExecute. In practice it only calls execute
+        // after validateUserOp returned SIG_VALIDATION_SUCCESS with a spending-key op.
         vm.prank(ENTRY_POINT_V09);
-        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, ENTRY_POINT_V09));
-        account.execute(address(usdc), 0, "");
+        account.execute(address(usdc), 0, abi.encodeCall(usdc.transfer, (attacker, 100e6)));
+
+        assertEq(usdc.balanceOf(attacker), 100e6);
     }
 
     function test_Account_UnauthorizedUserOp() public {
@@ -80,7 +86,8 @@ contract MozaikAccountTest is BaseTest {
     }
 
     function test_ValidateUserOp_ValidSpendingKey() public {
-        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        bytes memory callData = abi.encodeCall(account.execute, (address(usdc), 0, ""));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signSpendingUserOp(op, spendingSignerKey);
 
         vm.prank(ENTRY_POINT_V09);
@@ -90,7 +97,8 @@ contract MozaikAccountTest is BaseTest {
     }
 
     function test_ValidateUserOp_ValidRecoveryKey() public {
-        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (makeAddr("newKey")));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signRecoveryUserOp(op, recoverySignerKey);
 
         vm.prank(ENTRY_POINT_V09);
@@ -174,18 +182,72 @@ contract MozaikAccountTest is BaseTest {
         assertEq(account.spendingSigner(), newSpendingSigner);
     }
 
-    function test_RotateSpendingSigner_InvalidSpendingRotate() public {
+    function test_ValidateUserOp_SpendingKeyCannotSignRotate() public {
         address newSpendingSigner = makeAddr("newSpendingSigner");
         bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (newSpendingSigner));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signSpendingUserOp(op, spendingSignerKey);
 
         vm.prank(ENTRY_POINT_V09);
-        account.validateUserOp(op, _userOpHash(op), 0);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        // Spending key targeting a rotation function is rejected at the validation stage itself
+        assertEq(result, SIG_VALIDATION_FAILED);
+    }
+
+    function test_ValidateUserOp_RecoveryKeyCannotSignExecute() public {
+        bytes memory callData = abi.encodeCall(account.execute, (address(usdc), 0, ""));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
+        op = _signRecoveryUserOp(op, recoverySignerKey);
 
         vm.prank(ENTRY_POINT_V09);
-        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, ENTRY_POINT_V09));
-        account.rotateSpendingSigner(newSpendingSigner);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        // Recovery key targeting execute is rejected at the validation stage itself
+        assertEq(result, SIG_VALIDATION_FAILED);
+    }
+
+    function test_ValidateUserOp_SpendingKeyExecuteBatch() public {
+        PackedUserOperation memory op =
+            _buildUserOp(address(account), abi.encodeCall(account.executeBatch, (new BaseAccount.Call[](0))));
+        op = _signSpendingUserOp(op, spendingSignerKey);
+
+        vm.prank(ENTRY_POINT_V09);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        assertEq(result, SIG_VALIDATION_SUCCESS);
+    }
+
+    function test_ValidateUserOp_RecoveryKeyRotateRecovery() public {
+        bytes memory callData = abi.encodeCall(account.rotateRecoverySigner, (makeAddr("newRecovery")));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
+        op = _signRecoveryUserOp(op, recoverySignerKey);
+
+        vm.prank(ENTRY_POINT_V09);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        assertEq(result, SIG_VALIDATION_SUCCESS);
+    }
+
+    function test_ValidateUserOp_RecoveryKeyUpgrade() public {
+        bytes memory callData = abi.encodeCall(account.upgradeToAndCall, (address(0), ""));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
+        op = _signRecoveryUserOp(op, recoverySignerKey);
+
+        vm.prank(ENTRY_POINT_V09);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        assertEq(result, SIG_VALIDATION_SUCCESS);
+    }
+
+    function test_ValidateUserOp_EmptyCallDataRejected() public {
+        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        op = _signSpendingUserOp(op, spendingSignerKey);
+
+        vm.prank(ENTRY_POINT_V09);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        assertEq(result, SIG_VALIDATION_FAILED);
     }
 
     function test_RotateRecoverySigner_ValidCall() public {

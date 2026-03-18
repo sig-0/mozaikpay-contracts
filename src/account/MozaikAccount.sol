@@ -15,17 +15,16 @@ import {SIG_VALIDATION_FAILED, SIG_VALIDATION_SUCCESS} from "account-abstraction
  * @dev Two keys govern the account with strictly separated powers:
  *
  *      - spendingSigner  (secp256k1, lives on the user's device)
- *        Can execute arbitrary calls. Rotated only by the recovery key.
+ *        Can execute arbitrary calls (execute / executeBatch). Rotated only by the recovery key.
  *
  *      - recoverySigner  (secp256k1, stored in a secure backup)
  *        Can rotate either signer and authorize contract upgrades.
  *        Cannot execute arbitrary calls.
  *
- *      Key separation is enforced via transient storage: _validateSignature writes a
- *      key-type token (1 = spending, 2 = recovery) to slot _TS_KEY_TYPE, and the
- *      execution guards read it within the same transaction. This prevents a recovery-key
- *      UserOp from reaching execute(), and a spending-key UserOp from reaching rotation
- *      functions.
+ *      Key separation is enforced in _validateSignature by inspecting the first 4 bytes of
+ *      userOp.callData before ECDSA recovery. A spending-key UserOp whose callData does not
+ *      target execute/executeBatch is rejected; a recovery-key UserOp whose callData does not
+ *      target a rotation/upgrade function is rejected.
  */
 contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
     /**
@@ -33,12 +32,6 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
      */
     uint8 private constant SIG_SPENDING = 0x00;
     uint8 private constant SIG_RECOVERY = 0x01;
-
-    /**
-     * @dev Transient storage slot written by _validateSignature and read by the execution
-     *      guards within the same UserOp. 1 = spending key, 2 = recovery key, 0 = unset.
-     */
-    uint256 private constant _TS_KEY_TYPE = 0;
 
     /**
      * @dev ERC-4337 EntryPoint v0.9 deployed on all supported chains.
@@ -169,12 +162,12 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
      * @dev Validates the UserOp signature. Called by the EntryPoint before execution.
      *
      *      userOp.signature layout: sigType(1) || ecdsaSig(65)
-     *        - 0x00 (SIG_SPENDING): must be signed by spendingSigner; writes 1 to _TS_KEY_TYPE.
-     *        - 0x01 (SIG_RECOVERY): must be signed by recoverySigner; writes 2 to _TS_KEY_TYPE.
+     *        - 0x00 (SIG_SPENDING): callData must target execute or executeBatch; ECDSA must recover spendingSigner.
+     *        - 0x01 (SIG_RECOVERY): callData must target rotateSpendingSigner, rotateRecoverySigner, or
+     *          upgradeToAndCall; ECDSA must recover recoverySigner.
      *
-     *      The transient slot is consumed by _requireForExecute / _requireRecovery in the same
-     *      transaction, ensuring spending-key ops cannot reach recovery-only functions and
-     *      vice versa.
+     *      Key separation is enforced here by checking the callData selector before ECDSA recovery.
+     *      The execution guards trust the EntryPoint to only call execution after successful validation.
      */
     function _validateSignature(PackedUserOperation calldata userOp, bytes32 userOpHash)
         internal
@@ -191,51 +184,48 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
             return SIG_VALIDATION_FAILED;
         }
 
+        if (userOp.callData.length < 4) return SIG_VALIDATION_FAILED;
+
+        bytes4 selector = bytes4(userOp.callData[:4]);
+
         MozaikAccountStorage storage $ = _getMozaikAccountStorage();
 
         if (sigType == SIG_SPENDING) {
+            if (selector != this.execute.selector && selector != this.executeBatch.selector) {
+                return SIG_VALIDATION_FAILED;
+            }
+
             (address spendingRecovered, ECDSA.RecoverError spendingErr,) = ECDSA.tryRecover(userOpHash, ecdsaSig);
 
             if (spendingErr != ECDSA.RecoverError.NoError || spendingRecovered != $.spendingSigner) {
                 return SIG_VALIDATION_FAILED;
             }
 
-            assembly {
-                tstore(_TS_KEY_TYPE, 1)
-            }
-
             return SIG_VALIDATION_SUCCESS;
         }
 
-        // Recovery signer
+        // Recovery signer path
+        if (
+            selector != this.rotateSpendingSigner.selector && selector != this.rotateRecoverySigner.selector
+                && selector != this.upgradeToAndCall.selector
+        ) {
+            return SIG_VALIDATION_FAILED;
+        }
+
         (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(userOpHash, ecdsaSig);
 
         if (err != ECDSA.RecoverError.NoError || recovered != $.recoverySigner) return SIG_VALIDATION_FAILED;
-
-        assembly {
-            tstore(_TS_KEY_TYPE, 2)
-        }
 
         return SIG_VALIDATION_SUCCESS;
     }
 
     /**
-     * @dev Guards execute(). Permits the spending key only.
-     *      Via EntryPoint: transient slot must be 1 (spending key validated this UserOp).
+     * @dev Guards execute() and executeBatch(). Permits the spending key only.
+     *      Via EntryPoint: always allowed; _validateSignature already enforced the spending-key selector.
      *      Direct call: msg.sender must be spendingSigner.
      */
     function _requireForExecute() internal view override {
-        if (msg.sender == address(entryPoint())) {
-            uint256 keyType;
-
-            assembly {
-                keyType := tload(_TS_KEY_TYPE)
-            }
-
-            if (keyType == 1) return;
-
-            revert UnauthorizedCaller(msg.sender);
-        }
+        if (msg.sender == address(entryPoint())) return;
 
         if (msg.sender == _getMozaikAccountStorage().spendingSigner) return;
 
@@ -245,20 +235,11 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
     /**
      * @dev Guards rotateSpendingSigner, rotateRecoverySigner, and _authorizeUpgrade.
      *      Permits the recovery key only.
-     *      Via EntryPoint: transient slot must be 2 (recovery key validated this UserOp).
+     *      Via EntryPoint: always allowed; _validateSignature already enforced the recovery-key selector.
      *      Direct call: msg.sender must be recoverySigner.
      */
     function _requireRecovery() internal view {
-        if (msg.sender == address(entryPoint())) {
-            uint256 keyType;
-            assembly {
-                keyType := tload(_TS_KEY_TYPE)
-            }
-
-            if (keyType == 2) return;
-
-            revert UnauthorizedCaller(msg.sender);
-        }
+        if (msg.sender == address(entryPoint())) return;
 
         if (msg.sender == _getMozaikAccountStorage().recoverySigner) return;
 

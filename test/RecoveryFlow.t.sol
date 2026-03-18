@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
+import {SIG_VALIDATION_FAILED} from "account-abstraction/core/Helpers.sol";
 
 import {BaseTest} from "./BaseTest.t.sol";
 import {MozaikAccount} from "../src/account/MozaikAccount.sol";
@@ -107,12 +108,10 @@ contract RecoveryFlowTest is BaseTest {
         op = _signSpendingUserOp(op, spendingSignerKey);
 
         vm.prank(ENTRY_POINT_V09);
-        account.validateUserOp(op, _userOpHash(op), 0);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
 
-        // EntryPoint calls rotateSpendingSigner but tstore slot = 1 (spending) -> rejected
-        vm.prank(ENTRY_POINT_V09);
-        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, ENTRY_POINT_V09));
-        account.rotateSpendingSigner(newDeviceKey);
+        // Spending key cannot sign a rotation op — validation itself rejects it.
+        assertEq(result, SIG_VALIDATION_FAILED);
     }
 
     function test_Execute_RecoveryCannotExecute() public {
@@ -123,13 +122,10 @@ contract RecoveryFlowTest is BaseTest {
         op = _signRecoveryUserOp(op, recoverySignerKey);
 
         vm.prank(ENTRY_POINT_V09);
-        account.validateUserOp(op, _userOpHash(op), 0);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
 
-        // EntryPoint calls execute but tstore slot = 2 (recovery) -> rejected
-        vm.prank(ENTRY_POINT_V09);
-        vm.expectRevert(abi.encodeWithSelector(MozaikAccount.UnauthorizedCaller.selector, ENTRY_POINT_V09));
-        account.execute(address(usdc), 0, innerCall);
-
+        // Recovery key cannot sign an execute op — validation itself rejects it.
+        assertEq(result, SIG_VALIDATION_FAILED);
         assertEq(usdc.balanceOf(attacker), 0);
     }
 }
