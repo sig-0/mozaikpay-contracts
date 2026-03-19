@@ -156,6 +156,7 @@ abstract contract BaseTest is Test {
                 block.chainid,
                 op.sender,
                 op.nonce,
+                keccak256(op.initCode),
                 keccak256(op.callData),
                 op.accountGasLimits,
                 op.preVerificationGas,

@@ -108,15 +108,16 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
      * @dev Constructs the digest the backend must sign to approve sponsorship of a UserOp.
      *
      *      Binds to:
-     *        - address(this)             -  prevents use on a different paymaster
-     *        - block.chainid             -  prevents cross-chain replay
-     *        - userOp.sender             -  approves a specific account
-     *        - userOp.nonce              -  approves a single operation (EntryPoint enforces uniqueness)
+     *        - address(this)              -  prevents use on a different paymaster
+     *        - block.chainid              -  prevents cross-chain replay
+     *        - userOp.sender              -  approves a specific account
+     *        - userOp.nonce               -  approves a single operation (EntryPoint enforces uniqueness)
+     *        - keccak256(userOp.initCode) -  prevents factory substitution on first-deployment operations
      *        - keccak256(userOp.callData) -  approves a specific operation, not arbitrary calls
-     *        - userOp.accountGasLimits   -  prevents a bundler from inflating gas limits
-     *        - userOp.preVerificationGas -  included for the same reason
-     *        - userOp.gasFees            -  prevents a bundler from inflating the fee cap
-     *        - validUntil / validAfter   -  constrains the approval to a time window
+     *        - userOp.accountGasLimits    -  prevents a bundler from inflating gas limits
+     *        - userOp.preVerificationGas  -  included for the same reason
+     *        - userOp.gasFees             -  prevents a bundler from inflating the fee cap
+     *        - validUntil / validAfter    -  constrains the approval to a time window
      *
      */
     function _paymasterDigest(PackedUserOperation calldata userOp, uint48 validUntil, uint48 validAfter)
@@ -130,6 +131,7 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
                 block.chainid,
                 userOp.sender,
                 userOp.nonce,
+                keccak256(userOp.initCode),
                 keccak256(userOp.callData),
                 userOp.accountGasLimits,
                 userOp.preVerificationGas,
