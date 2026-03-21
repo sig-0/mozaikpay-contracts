@@ -9,34 +9,48 @@ SPONSOR_ADDRESS="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
 
 # Canonical addresses - match production on Base mainnet.
 CANONICAL_EP="0x433709009B8330FDa32311DF1C2AFA402eD8D009"
-CANONICAL_SC="0x0A630a99Df908A81115A3022927Be82f9299987e"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# === Place EntryPoint v0.9 + SenderCreator at canonical addresses ===
-echo "Etching EntryPoint v0.9 and SenderCreator..."
+# === Deploy EntryPoint v0.9 via deterministic CREATE2 proxy ===
+# Reproduces the canonical deployment used on all production chains:
+# https://github.com/eth-infinitism/account-abstraction/blob/develop/deploy/1_deploy_entrypoint.ts
+#
+# Anvil ships with the Arachnid deterministic deployment proxy pre-deployed at
+# 0x4e59b44847b379578588920cA78FbF26c0B4956C. We send the canonical salt +
+# initcode to it, which runs the EntryPoint constructor (including SenderCreator
+# creation) and produces the same address used on all production chains.
 
-EP_BYTECODE=$(cat "$SCRIPT_DIR/testdata/entrypoint_v09.bytecode")
-SC_BYTECODE=$(cat "$SCRIPT_DIR/testdata/sendercreator.bytecode")
+echo "Deploying EntryPoint v0.9..."
 
-cast rpc anvil_setCode "$CANONICAL_EP" "\"$EP_BYTECODE\"" --rpc-url $RPC > /dev/null
-cast rpc anvil_setCode "$CANONICAL_SC" "\"$SC_BYTECODE\"" --rpc-url $RPC > /dev/null
+# Arachnid's deterministic deployment proxy (pre-deployed by anvil).
+CREATE2_PROXY="0x4e59b44847b379578588920cA78FbF26c0B4956C"
 
-# Verify cross-references
-VERIFY_SC=$(cast call $CANONICAL_EP "senderCreator()(address)" --rpc-url $RPC)
-VERIFY_EP=$(cast call $CANONICAL_SC "entryPoint()(address)" --rpc-url $RPC)
-echo "EntryPoint etched at $CANONICAL_EP (senderCreator: $VERIFY_SC)"
-echo "SenderCreator etched at $CANONICAL_SC (entryPoint: $VERIFY_EP)"
+# Salt from the account-abstraction repo.
+EP_SALT="7702864008ddeab30aa67b7adc3d2653bc8d162714b1fe8fe4582df814f3bf61"
+EP_INITCODE=$(cat "$SCRIPT_DIR/testdata/entrypoint_v09_initcode.hex")
 
-if [ "$VERIFY_SC" != "$CANONICAL_SC" ]; then
-  echo "ERROR: senderCreator() returned $VERIFY_SC, expected $CANONICAL_SC"
+cast send "$CREATE2_PROXY" "0x${EP_SALT}${EP_INITCODE}" \
+  --gas-limit 6000000 \
+  --rpc-url $RPC \
+  --private-key $DEPLOYER_KEY > /dev/null
+
+# Verify canonical address and SenderCreator
+EP_CODE=$(cast code "$CANONICAL_EP" --rpc-url $RPC)
+if [ "$EP_CODE" = "0x" ]; then
+  echo "ERROR: EntryPoint not deployed at $CANONICAL_EP"
   exit 1
 fi
 
-if [ "$VERIFY_EP" != "$CANONICAL_EP" ]; then
-  echo "ERROR: entryPoint() returned $VERIFY_EP, expected $CANONICAL_EP"
+SENDER_CREATOR=$(cast call "$CANONICAL_EP" "senderCreator()(address)" --rpc-url $RPC)
+SC_CODE=$(cast code "$SENDER_CREATOR" --rpc-url $RPC)
+if [ "$SC_CODE" = "0x" ]; then
+  echo "ERROR: SenderCreator not deployed at $SENDER_CREATOR"
   exit 1
 fi
+
+echo "  EntryPoint deployed at $CANONICAL_EP"
+echo "  SenderCreator deployed at $SENDER_CREATOR"
 
 # === Deploy Base L1 gas oracle mock ===
 L1_GAS_ORACLE="0x420000000000000000000000000000000000000F"
