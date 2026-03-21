@@ -11,6 +11,9 @@ lcov.info
 echidna-corpus/
 crytic-export/
 
+# Deploy artifacts
+broadcast/
+
 # Editor leftovers
 .idea
 .vscode
