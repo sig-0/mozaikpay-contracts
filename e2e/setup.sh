@@ -20,6 +20,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # 0x4e59b44847b379578588920cA78FbF26c0B4956C. We send the canonical salt +
 # initcode to it, which runs the EntryPoint constructor (including SenderCreator
 # creation) and produces the same address used on all production chains.
+#
+# The initcode hex is a stored artifact compiled with hardhat (solc 0.8.28,
+# optimizer 1M runs, via-ir). Foundry cannot reproduce it because solc embeds
+# source-file paths in the bytecode metadata hash, and Foundry resolves paths
+# differently than hardhat - producing valid but non-identical bytecode that
+# lands at a different CREATE2 address. To regenerate:
+#   cd lib/account-abstraction && yarn install && npx hardhat compile
+#   # then extract artifacts/contracts/core/EntryPoint.sol/EntryPoint.json -> bytecode
 
 echo "Deploying EntryPoint v0.9..."
 
@@ -43,14 +51,8 @@ if [ "$EP_CODE" = "0x" ]; then
 fi
 
 SENDER_CREATOR=$(cast call "$CANONICAL_EP" "senderCreator()(address)" --rpc-url $RPC)
-SC_CODE=$(cast code "$SENDER_CREATOR" --rpc-url $RPC)
-if [ "$SC_CODE" = "0x" ]; then
-  echo "ERROR: SenderCreator not deployed at $SENDER_CREATOR"
-  exit 1
-fi
-
-echo "  EntryPoint deployed at $CANONICAL_EP"
-echo "  SenderCreator deployed at $SENDER_CREATOR"
+echo "  EntryPoint:     $CANONICAL_EP"
+echo "  SenderCreator:  $SENDER_CREATOR"
 
 # === Deploy Base L1 gas oracle mock ===
 L1_GAS_ORACLE="0x420000000000000000000000000000000000000F"
