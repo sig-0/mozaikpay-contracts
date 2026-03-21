@@ -7,7 +7,7 @@ evm_version = "cancun"
 optimizer = true
 optimizer_runs = 200
 # Coverage: only report production code; exclude tests, scripts, and lib
-no_match_coverage = "(test|script|lib)"
+no_match_coverage = "(test|script|lib|e2e)"
 
 [profile.default.fuzz]
 runs = 10000
@@ -17,6 +17,10 @@ max_test_rejects = 65536
 runs = 500
 depth = 100
 show_metrics = true
+
+[profile.e2e]
+test = "e2e"
+via_ir = true
 
 # Disable mixed-case-function check globally: the Echidna fuzzer requires the
 # echidna_ prefix on invariant functions (cannot be renamed to mixedCase).

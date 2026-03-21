@@ -25,7 +25,7 @@ remappings:
 # Runs unit / fuzz / invariant tests without the RPC
 .PHONY: test
 test:
-	forge test --no-match-contract "UserOpFlow"
+	forge test --no-match-contract "UserOpFlow" --no-match-path "e2e/*"
 
 # Runs fork integration tests against Base Sepolia.
 # Requires BASE_SEPOLIA_RPC in the env to be set
@@ -42,7 +42,12 @@ test-invariant:
 # RPC-required tests are skipped unless the env is set
 .PHONY: test-all
 test-all:
-	forge test
+	forge test --no-match-path "e2e/*"
+
+# E2E lifecycle test against a local anvil node
+.PHONY: test-e2e
+test-e2e:
+	./e2e/run.sh
 
 # Verbose output for a specific test or pattern
 # Usage: make test-match PATTERN=test_Execute
@@ -52,11 +57,11 @@ test-match:
 
 .PHONY: coverage
 coverage:
-	forge coverage --no-match-test "Fork\|fork"
+	forge coverage --no-match-test "Fork\|fork" --no-match-path "e2e/*"
 
 .PHONY: snapshot
 snapshot:
-	forge snapshot --no-match-test "Fork\|fork"
+	forge snapshot --no-match-test "Fork\|fork" --no-match-path "e2e/*"
 
 # Static analysis
 
