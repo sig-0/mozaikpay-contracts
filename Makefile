@@ -114,7 +114,7 @@ deploy-sepolia:
 .PHONY: deploy-mainnet
 deploy-mainnet:
 	forge script script/01_Deploy.s.sol \
-		--rpc-url base \
+		--rpc-url base_mainnet \
 		$(EXTRA)
 
 # Funding
@@ -129,7 +129,7 @@ fund-paymaster-sepolia:
 .PHONY: fund-paymaster-mainnet
 fund-paymaster-mainnet:
 	forge script script/02_FundPaymaster.s.sol \
-		--rpc-url base \
+		--rpc-url base_mainnet \
 		$(EXTRA)
 
 # Ownership transfer
@@ -144,7 +144,7 @@ transfer-ownership-sepolia:
 .PHONY: transfer-ownership-mainnet
 transfer-ownership-mainnet:
 	forge script script/03_TransferOwnership.s.sol \
-		--rpc-url base \
+		--rpc-url base_mainnet \
 		$(EXTRA)
 
 # Post-deploy verification
@@ -158,4 +158,4 @@ verify-sepolia:
 .PHONY: verify-mainnet
 verify-mainnet:
 	forge script script/VerifyDeploy.s.sol \
-		--rpc-url base
+		--rpc-url base_mainnet
