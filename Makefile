@@ -147,6 +147,21 @@ transfer-ownership-mainnet:
 		--rpc-url base_mainnet \
 		$(EXTRA)
 
+# Dev: fund a wallet with mock USDC (transfers from pre-funded deployer)
+# Requires TO and AMOUNT (in whole USDC, e.g. 1000) in the env.
+# Uses Anvil account #0 as the sender.
+#
+# Usage: TO=0x... AMOUNT=1000 make dev-fund
+
+ANVIL_DEPLOYER_KEY := 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+
+.PHONY: dev-fund
+dev-fund:
+	forge script script/DevFundUSDC.s.sol \
+		--rpc-url http://localhost:8545 \
+		--private-key $(ANVIL_DEPLOYER_KEY) \
+		--broadcast
+
 # Post-deploy verification
 # Requires FACTORY_ADDRESS and PAYMASTER_ADDRESS in the env.
 
