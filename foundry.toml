@@ -25,8 +25,11 @@ via_ir = true
 # Disable mixed-case-function check globally: the Echidna fuzzer requires the
 # echidna_ prefix on invariant functions (cannot be renamed to mixedCase).
 # make lint only runs on src/ where no mixed-case violations exist.
+# block-timestamp is also excluded: MozaikLinks uses block.timestamp for
+# payment-link expiry on day/week-scale windows where validator drift is
+# irrelevant, and there is no realistic alternative on EVM.
 [lint]
-exclude_lints = ["mixed-case-function", "asm-keccak256"]
+exclude_lints = ["mixed-case-function", "asm-keccak256", "block-timestamp"]
 
 [rpc_endpoints]
 base_mainnet = "${BASE_MAINNET_RPC}"
