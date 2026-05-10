@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {BaseAccount} from "account-abstraction/core/BaseAccount.sol";
@@ -11,6 +12,7 @@ import {BaseAccount} from "account-abstraction/core/BaseAccount.sol";
 import {MozaikAccount} from "../src/account/MozaikAccount.sol";
 import {MozaikAccountFactory} from "../src/account/MozaikAccountFactory.sol";
 import {MozaikVerifyingPaymaster} from "../src/paymaster/MozaikVerifyingPaymaster.sol";
+import {MozaikLinks} from "../src/paylinks/MozaikLinks.sol";
 
 /// @dev V2 mock used in upgrade tests. Adds a version() getter.
 contract MockMozaikAccountV2 is MozaikAccount {
@@ -266,7 +268,65 @@ contract E2ETest is Test {
         assertEq(usdc.balanceOf(recipient), 100e6, "recipient didn't receive USDC");
         assertEq(usdc.balanceOf(expectedAddr), 900e6, "account balance incorrect");
 
-        // Step 4: Rotate Spending Signer
+        // Step 4: Paylinks: sponsored create + EOA claim
+
+        MozaikLinks links = new MozaikLinks(IERC20(address(usdc)));
+
+        (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("paylinkEphemeralKey");
+        bytes32 linkId = keccak256("e2e-link");
+        uint256 linkAmount = 100e6;
+        uint40 linkExpiry = uint40(block.timestamp + 1 days);
+
+        // Approve MozaikLinks to pull USDC from the smart account (sponsored UserOp).
+        callData = abi.encodeCall(
+            BaseAccount.execute,
+            (address(usdc), 0, abi.encodeCall(usdc.approve, (address(links), type(uint256).max)))
+        );
+        nonce = ep.getNonce(expectedAddr, 0);
+        op = _buildUserOp(expectedAddr, callData, "", nonce);
+        op = _packSpendingOp(op, spendingKey);
+        _handleSingleOp(op);
+
+        // Create the paylink (sponsored UserOp). Account loses linkAmount USDC into escrow.
+        callData = abi.encodeCall(
+            BaseAccount.execute,
+            (address(links), 0, abi.encodeCall(links.create, (linkId, linkPubKey, linkAmount, linkExpiry)))
+        );
+        nonce = ep.getNonce(expectedAddr, 0);
+        op = _buildUserOp(expectedAddr, callData, "", nonce);
+        op = _packSpendingOp(op, spendingKey);
+        _handleSingleOp(op);
+
+        assertEq(usdc.balanceOf(address(links)), linkAmount, "link funds not escrowed");
+        assertEq(usdc.balanceOf(expectedAddr), 800e6, "account balance after create incorrect");
+
+        // Recipient claims via direct EOA call (no Mozaik account required).
+        address paylinkRecipient = makeAddr("paylinkRecipient");
+
+        bytes32 linksDomainSep = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("MozaikLinks"),
+                keccak256("1"),
+                block.chainid,
+                address(links)
+            )
+        );
+        bytes32 claimStructHash = keccak256(
+            abi.encode(keccak256("Claim(bytes32 linkId,address recipient)"), linkId, paylinkRecipient)
+        );
+        bytes32 claimDigest = keccak256(abi.encodePacked("\x19\x01", linksDomainSep, claimStructHash));
+
+        (uint8 cv, bytes32 cr, bytes32 cs) = vm.sign(linkPrivKey, claimDigest);
+        bytes memory claimSig = abi.encodePacked(cr, cs, cv);
+
+        vm.prank(paylinkRecipient);
+        links.claim(linkId, claimSig);
+
+        assertEq(usdc.balanceOf(paylinkRecipient), linkAmount, "recipient didn't get paylink funds");
+        assertEq(usdc.balanceOf(address(links)), 0, "escrow not drained");
+
+        // Step 5: Rotate Spending Signer
         (address newSpendingSigner, uint256 newSpendingKey) = makeAddrAndKey("newSpendingSigner");
 
         callData = abi.encodeCall(account.rotateSpendingSigner, (newSpendingSigner));
@@ -293,7 +353,7 @@ contract E2ETest is Test {
         // Update local reference for subsequent steps
         spendingKey = newSpendingKey;
 
-        // Step 5: Rotate Recovery Signer
+        // Step 6: Rotate Recovery Signer
         (address newRecoverySigner, uint256 newRecoveryKey) = makeAddrAndKey("newRecoverySigner");
 
         callData = abi.encodeCall(account.rotateRecoverySigner, (newRecoverySigner));
@@ -308,7 +368,7 @@ contract E2ETest is Test {
         // Update local reference for subsequent steps
         recoveryKey = newRecoveryKey;
 
-        // Step 6: Upgrade Implementation
+        // Step 7: Upgrade Implementation
         MockMozaikAccountV2 v2Impl = new MockMozaikAccountV2();
 
         callData = abi.encodeCall(account.upgradeToAndCall, (address(v2Impl), ""));
@@ -322,7 +382,7 @@ contract E2ETest is Test {
         assertEq(account.spendingSigner(), newSpendingSigner, "spending signer lost after upgrade");
         assertEq(account.recoverySigner(), newRecoverySigner, "recovery signer lost after upgrade");
 
-        // Step 7: New Factory + Cross-Version Upgrade
+        // Step 8: New Factory + Cross-Version Upgrade
         // Deploy a new factory (which creates a fresh MozaikAccount implementation)
         MozaikAccountFactory newFactory = new MozaikAccountFactory(ep);
         MozaikAccount newImpl = newFactory.ACCOUNT_IMPLEMENTATION();
