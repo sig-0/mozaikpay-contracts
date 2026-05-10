@@ -11,7 +11,7 @@ import {SIG_VALIDATION_FAILED, SIG_VALIDATION_SUCCESS} from "account-abstraction
 
 /**
  * @title MozaikAccount
- * @notice ERC-4337 smart account used by Mozaik Pay. Deployed as a UUPS proxy via MozaikAccountFactory.
+ * @notice ERC-4337 smart account used by MozaikPay. Deployed as a UUPS proxy via MozaikAccountFactory.
  * @dev Two keys govern the account with strictly separated powers:
  *
  *      - spendingSigner  (secp256k1, lives on the user's device)

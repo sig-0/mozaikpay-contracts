@@ -10,9 +10,9 @@ import {_packValidationData} from "account-abstraction/core/Helpers.sol";
 
 /**
  * @title MozaikVerifyingPaymaster
- * @notice ERC-4337 paymaster that sponsors gas for Mozaik Pay users based on a short-lived
- *         off-chain signature from the Mozaik Pay backend.
- * @dev The backend (sponsor key) enforces Mozaik Pay's own sponsorship policy off-chain and
+ * @notice ERC-4337 paymaster that sponsors gas for MozaikPay users based on a short-lived
+ *         off-chain signature from the MozaikPay backend.
+ * @dev The backend (sponsor key) enforces MozaikPay's own sponsorship policy off-chain and
  *      issues a per-operation approval valid for a fixed time window. The paymaster verifies
  *      that approval on-chain before agreeing to pay for gas.
  *
@@ -73,7 +73,7 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
      *
      *      userOpHash and maxCost are intentionally ignored: the digest is constructed
      *      over only the fields the backend commits to (see _paymasterDigest), and
-     *      Mozaik Pay sponsors unconditionally with no per-op cost cap.
+     *      MozaikPay sponsors unconditionally with no per-op cost cap.
      *
      *      Never reverts - a bad signature returns sigFailed=true which the EntryPoint
      *      treats as a validation failure without reverting the bundle.
@@ -81,7 +81,7 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
     function _validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
         bytes32, // userOpHash - not used; we build our own digest
-        uint256 // maxCost   - not used; Mozaik Pay sponsors unconditionally
+        uint256 // maxCost   - not used; MozaikPay sponsors unconditionally
     )
         internal
         view

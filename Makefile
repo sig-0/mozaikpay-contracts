@@ -25,13 +25,13 @@ remappings:
 # Runs unit / fuzz / invariant tests without the RPC
 .PHONY: test
 test:
-	forge test --no-match-contract "UserOpFlow" --no-match-path "e2e/*"
+	forge test --no-match-contract "UserOpFlow|Fork" --no-match-path "e2e/*"
 
 # Runs fork integration tests against Base Sepolia.
 # Requires BASE_SEPOLIA_RPC in the env to be set
 .PHONY: test-fork
 test-fork:
-	forge test --match-contract "UserOpFlow"
+	forge test --match-contract "UserOpFlow|Fork"
 
 # Runs invariant tests only
 .PHONY: test-invariant
@@ -73,7 +73,7 @@ slither:
 # https://github.com/crytic/echidna
 
 .PHONY: echidna
-echidna: echidna-paymaster echidna-account
+echidna: echidna-paymaster echidna-account echidna-paylinks
 
 .PHONY: echidna-paymaster
 echidna-paymaster:
@@ -82,6 +82,10 @@ echidna-paymaster:
 .PHONY: echidna-account
 echidna-account:
 	echidna test/echidna/AccountEchidna.sol --contract AccountEchidna --config echidna.yaml
+
+.PHONY: echidna-paylinks
+echidna-paylinks:
+	echidna test/echidna/PaylinksEchidna.sol --contract PaylinksEchidna --config echidna.yaml
 
 # Local node (Anvil)
 
@@ -144,6 +148,22 @@ transfer-ownership-sepolia:
 .PHONY: transfer-ownership-mainnet
 transfer-ownership-mainnet:
 	forge script script/03_TransferOwnership.s.sol \
+		--rpc-url base_mainnet \
+		$(EXTRA)
+
+# Paylinks escrow deployment
+# Requires USDC_ADDRESS in the env (Base Sepolia: 0x036CbD53842c5426634e7929541eC2318f3dCF7e,
+# Base mainnet: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913).
+
+.PHONY: deploy-paylinks-sepolia
+deploy-paylinks-sepolia:
+	forge script script/04_DeployPaylinks.s.sol \
+		--rpc-url base_sepolia \
+		$(EXTRA)
+
+.PHONY: deploy-paylinks-mainnet
+deploy-paylinks-mainnet:
+	forge script script/04_DeployPaylinks.s.sol \
 		--rpc-url base_mainnet \
 		$(EXTRA)
 
