@@ -1,3 +1,10 @@
+# Default RPC endpoints for Base Sepolia and Base mainnet.
+# Override by exporting BASE_SEPOLIA_RPC / BASE_MAINNET_RPC in the shell
+BASE_SEPOLIA_RPC ?= https://sepolia.base.org
+BASE_MAINNET_RPC ?= https://mainnet.base.org
+export BASE_SEPOLIA_RPC
+export BASE_MAINNET_RPC
+
 # Forge build commands
 
 .PHONY: build
@@ -28,7 +35,7 @@ test:
 	forge test --no-match-contract "UserOpFlow|Fork" --no-match-path "e2e/*"
 
 # Runs fork integration tests against Base Sepolia.
-# Requires BASE_SEPOLIA_RPC in the env to be set
+# Uses BASE_SEPOLIA_RPC (defaults to https://sepolia.base.org).
 .PHONY: test-fork
 test-fork:
 	forge test --match-contract "UserOpFlow|Fork"

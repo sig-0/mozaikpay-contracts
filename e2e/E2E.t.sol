@@ -273,9 +273,8 @@ contract E2ETest is Test {
         MozaikLinks links = new MozaikLinks(IERC20(address(usdc)));
 
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("paylinkEphemeralKey");
-        bytes32 linkId = keccak256("e2e-link");
         uint256 linkAmount = 100e6;
-        uint40 linkExpiry = uint40(block.timestamp + 1 days);
+        uint64 linkExpiry = uint64(block.timestamp + 1 days);
 
         // Approve MozaikLinks to pull USDC from the smart account (sponsored UserOp).
         callData = abi.encodeCall(
@@ -290,7 +289,7 @@ contract E2ETest is Test {
         // Create the paylink (sponsored UserOp). Account loses linkAmount USDC into escrow.
         callData = abi.encodeCall(
             BaseAccount.execute,
-            (address(links), 0, abi.encodeCall(links.create, (linkId, linkPubKey, linkAmount, linkExpiry)))
+            (address(links), 0, abi.encodeCall(links.create, (linkPubKey, linkAmount, linkExpiry)))
         );
         nonce = ep.getNonce(expectedAddr, 0);
         op = _buildUserOp(expectedAddr, callData, "", nonce);
@@ -313,7 +312,7 @@ contract E2ETest is Test {
             )
         );
         bytes32 claimStructHash = keccak256(
-            abi.encode(keccak256("Claim(bytes32 linkId,address recipient)"), linkId, paylinkRecipient)
+            abi.encode(keccak256("Claim(address claimSigner,address recipient)"), linkPubKey, paylinkRecipient)
         );
         bytes32 claimDigest = keccak256(abi.encodePacked("\x19\x01", linksDomainSep, claimStructHash));
 
@@ -321,7 +320,7 @@ contract E2ETest is Test {
         bytes memory claimSig = abi.encodePacked(cr, cs, cv);
 
         vm.prank(paylinkRecipient);
-        links.claim(linkId, claimSig);
+        links.claim(linkPubKey, claimSig);
 
         assertEq(usdc.balanceOf(paylinkRecipient), linkAmount, "recipient didn't get paylink funds");
         assertEq(usdc.balanceOf(address(links)), 0, "escrow not drained");

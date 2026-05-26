@@ -1,5 +1,7 @@
 testMode: property
 seqLen: 100
+testLimit: 500000
+workers: 4
 corpusDir: echidna-corpus
 coverage: true
 solcArgs: "--optimize --optimize-runs 200"

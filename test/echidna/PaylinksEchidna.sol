@@ -33,9 +33,9 @@ contract PaylinksEchidna {
     uint256 public sweepCount;
     bool public statusEverWentBackwards;
 
-    bytes32[] internal _ids;
-    mapping(bytes32 => bool) internal _seen;
-    mapping(bytes32 => MozaikLinks.Status) internal _lastStatus;
+    address[] internal _signers;
+    mapping(address => bool) internal _seen;
+    mapping(address => MozaikLinks.Status) internal _lastStatus;
 
     address internal constant SENDER = address(0xA11CE);
 
@@ -44,81 +44,78 @@ contract PaylinksEchidna {
         links = new MozaikLinks(IERC20(address(usdc)));
     }
 
-    // -------------------------------------------------------------------------
-    // Action wrappers — fuzzer drives these with random inputs
-    // -------------------------------------------------------------------------
-
-    function tryCreate(uint96 idSeed, uint96 pubKeySeed, uint96 amount, uint40 expiryOffset) external {
+    function tryCreate(uint96 pubKeySeed, uint96 amount, uint64 expiryOffset) external {
         if (amount == 0) return;
         if (expiryOffset == 0) return;
         if (pubKeySeed == 0) return; // claimSigner == address(0) is rejected; skip.
 
-        bytes32 id = keccak256(abi.encode("link", idSeed));
-        if (_seen[id]) return;
+        address claimSigner = address(uint160(uint256(keccak256(abi.encode("k", pubKeySeed)))));
+        if (claimSigner == address(0)) return;
+        if (_seen[claimSigner]) return;
 
         // Cap amount to avoid silly values that overflow ghosts; 1B units is plenty.
         if (amount > 1_000_000_000) amount = 1_000_000_000;
 
-        uint40 expiresAt = uint40(block.timestamp) + uint40(expiryOffset);
-        if (expiresAt <= block.timestamp) return;
+        // Cap expiry to Echidna's default maxTimeDelay window (1 week) so sweepExpired is reachable.
+        if (expiryOffset > 7 days) expiryOffset = uint64((uint256(expiryOffset) % 7 days) + 1);
 
-        address claimSigner = address(uint160(uint256(keccak256(abi.encode("k", pubKeySeed)))));
-        if (claimSigner == address(0)) return;
+        uint64 expiresAt = uint64(block.timestamp) + uint64(expiryOffset);
+        if (expiresAt <= block.timestamp) return;
 
         usdc.mint(SENDER, amount);
 
         // The "sender" is a fixed pseudo-EOA so revoke is testable from a single principal.
         // Echidna can't `vm.prank`; we route through a tiny shim that approves+forwards.
-        _proxyCreate(id, claimSigner, amount, expiresAt);
+        _proxyCreate(claimSigner, amount, expiresAt);
 
-        _ids.push(id);
-        _seen[id] = true;
+        _signers.push(claimSigner);
+        _seen[claimSigner] = true;
         activeTotal += amount;
         createCount += 1;
-        _trackStatus(id);
+
+        _trackStatus(claimSigner);
     }
 
     function tryRevoke(uint96 idIndex) external {
-        if (_ids.length == 0) return;
-        bytes32 id = _ids[idIndex % _ids.length];
+        if (_signers.length == 0) return;
+        address claimSigner = _signers[idIndex % _signers.length];
 
-        MozaikLinks.Link memory link = links.getLink(id);
+        MozaikLinks.Link memory link = links.getLink(claimSigner);
         if (link.status != MozaikLinks.Status.Active) return;
         if (block.timestamp >= link.expiresAt) return; // revoke pre-expiry only
 
-        try EchidnaSenderShim(senderShim()).revoke(id) {
+        try EchidnaSenderShim(senderShim()).revoke(claimSigner) {
             activeTotal -= link.amount;
             revokeCount += 1;
         } catch {
-            // Revert is acceptable in fuzzing — fuzzer ignores and moves on.
+            // Revert is acceptable in fuzzing (fuzzer ignores and moves on)
         }
-        _trackStatus(id);
+
+        _trackStatus(claimSigner);
     }
 
     function trySweepExpired(uint96 idIndex) external {
-        if (_ids.length == 0) return;
-        bytes32 id = _ids[idIndex % _ids.length];
+        if (_signers.length == 0) return;
+        address claimSigner = _signers[idIndex % _signers.length];
 
-        MozaikLinks.Link memory link = links.getLink(id);
+        MozaikLinks.Link memory link = links.getLink(claimSigner);
         if (link.status != MozaikLinks.Status.Active) return;
         if (block.timestamp < link.expiresAt) return;
 
-        try links.sweepExpired(id) {
+        try links.sweepExpired(claimSigner) {
             activeTotal -= link.amount;
             sweepCount += 1;
         } catch {}
-        _trackStatus(id);
+
+        _trackStatus(claimSigner);
     }
 
     function tryDust(uint96 amount) external {
         if (amount == 0) return;
+
         usdc.mint(address(this), amount);
         usdc.transfer(address(links), amount);
     }
-
-    // -------------------------------------------------------------------------
-    // Properties (Echidna asserts each returns true after every fuzz call)
-    // -------------------------------------------------------------------------
 
     /// @notice Sum of currently-active link amounts must never exceed the escrow's USDC balance.
     function echidna_active_amount_le_balance() external view returns (bool) {
@@ -136,30 +133,30 @@ contract PaylinksEchidna {
         return usdc.balanceOf(address(links)) >= activeTotal;
     }
 
-    // -------------------------------------------------------------------------
-    // Internal plumbing
-    // -------------------------------------------------------------------------
-
     EchidnaSenderShim internal _senderShim;
 
     function senderShim() public returns (address) {
         if (address(_senderShim) == address(0)) {
             _senderShim = new EchidnaSenderShim(links, usdc);
         }
+
         return address(_senderShim);
     }
 
-    function _proxyCreate(bytes32 id, address claimSigner, uint256 amount, uint40 expiresAt) internal {
+    function _proxyCreate(address claimSigner, uint256 amount, uint64 expiresAt) internal {
         EchidnaSenderShim shim = EchidnaSenderShim(senderShim());
+
         usdc.mint(address(shim), amount);
-        shim.create(id, claimSigner, amount, expiresAt);
+        shim.create(claimSigner, amount, expiresAt);
     }
 
-    function _trackStatus(bytes32 id) internal {
-        MozaikLinks.Status current = links.getLink(id).status;
-        MozaikLinks.Status prev = _lastStatus[id];
+    function _trackStatus(address claimSigner) internal {
+        MozaikLinks.Status current = links.getLink(claimSigner).status;
+        MozaikLinks.Status prev = _lastStatus[claimSigner];
+
         if (uint256(current) < uint256(prev)) statusEverWentBackwards = true;
-        _lastStatus[id] = current;
+
+        _lastStatus[claimSigner] = current;
     }
 }
 
@@ -171,14 +168,15 @@ contract EchidnaSenderShim {
     constructor(MozaikLinks _links, MintableERC20 _usdc) {
         links = _links;
         usdc = _usdc;
+
         usdc.approve(address(links), type(uint256).max);
     }
 
-    function create(bytes32 id, address claimSigner, uint256 amount, uint40 expiresAt) external {
-        links.create(id, claimSigner, amount, expiresAt);
+    function create(address claimSigner, uint256 amount, uint64 expiresAt) external {
+        links.create(claimSigner, amount, expiresAt);
     }
 
-    function revoke(bytes32 id) external {
-        links.revoke(id);
+    function revoke(address claimSigner) external {
+        links.revoke(claimSigner);
     }
 }

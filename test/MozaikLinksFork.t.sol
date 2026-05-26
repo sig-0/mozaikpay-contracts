@@ -15,7 +15,7 @@ contract MozaikLinksForkTest is Test {
     /// https://developers.circle.com/stablecoins/usdc-contract-addresses
     address internal constant BASE_SEPOLIA_USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
 
-    bytes32 internal constant CLAIM_TYPEHASH = keccak256("Claim(bytes32 linkId,address recipient)");
+    bytes32 internal constant CLAIM_TYPEHASH = keccak256("Claim(address claimSigner,address recipient)");
     bytes32 internal constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
@@ -29,7 +29,6 @@ contract MozaikLinksForkTest is Test {
     address internal linkPubKey;
     uint256 internal linkPrivKey;
 
-    bytes32 internal constant LINK_ID = keccak256("fork-link-1");
     uint256 internal constant AMOUNT = 5_000_000; // 5 USDC
 
     modifier onlyFork() {
@@ -70,8 +69,8 @@ contract MozaikLinksForkTest is Test {
         );
     }
 
-    function _signClaim(uint256 privKey, bytes32 linkId, address claimer) internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(abi.encode(CLAIM_TYPEHASH, linkId, claimer));
+    function _signClaim(uint256 privKey, address claimSigner, address claimer) internal view returns (bytes memory) {
+        bytes32 structHash = keccak256(abi.encode(CLAIM_TYPEHASH, claimSigner, claimer));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privKey, digest);
 
@@ -85,19 +84,19 @@ contract MozaikLinksForkTest is Test {
         uint256 recipientBefore = usdc.balanceOf(recipient);
 
         vm.prank(sender);
-        links.create(LINK_ID, linkPubKey, AMOUNT, uint40(block.timestamp + 1 hours));
+        links.create(linkPubKey, AMOUNT, uint64(block.timestamp + 1 hours));
 
         assertEq(usdc.balanceOf(sender), senderBefore - AMOUNT, "sender USDC not deducted");
         assertEq(usdc.balanceOf(address(links)), AMOUNT, "escrow USDC not received");
 
-        bytes memory sig = _signClaim(linkPrivKey, LINK_ID, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
         vm.prank(recipient);
-        links.claim(LINK_ID, sig);
+        links.claim(linkPubKey, sig);
 
         assertEq(usdc.balanceOf(recipient), recipientBefore + AMOUNT, "recipient not paid");
         assertEq(usdc.balanceOf(address(links)), 0, "escrow not drained");
 
-        MozaikLinks.Link memory link = links.getLink(LINK_ID);
+        MozaikLinks.Link memory link = links.getLink(linkPubKey);
         assertEq(uint256(link.status), uint256(MozaikLinks.Status.Claimed));
     }
 
@@ -107,32 +106,32 @@ contract MozaikLinksForkTest is Test {
         uint256 senderBefore = usdc.balanceOf(sender);
 
         vm.prank(sender);
-        links.create(LINK_ID, linkPubKey, AMOUNT, uint40(block.timestamp + 1 hours));
+        links.create(linkPubKey, AMOUNT, uint64(block.timestamp + 1 hours));
 
         vm.prank(sender);
-        links.revoke(LINK_ID);
+        links.revoke(linkPubKey);
 
         assertEq(usdc.balanceOf(sender), senderBefore, "sender not refunded after revoke");
-        assertEq(uint256(links.getLink(LINK_ID).status), uint256(MozaikLinks.Status.Revoked));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Revoked));
     }
 
     function test_Fork_SweepExpiredAfterTTL() public onlyFork {
         _setupFork();
 
         uint256 senderBefore = usdc.balanceOf(sender);
-        uint40 expiresAt = uint40(block.timestamp + 60);
+        uint64 expiresAt = uint64(block.timestamp + 60);
 
         vm.prank(sender);
-        links.create(LINK_ID, linkPubKey, AMOUNT, expiresAt);
+        links.create(linkPubKey, AMOUNT, expiresAt);
 
         vm.warp(expiresAt + 1);
 
         // Permissionless: a third party can call sweep; funds still go to the sender.
         address sweeper = makeAddr("sweeper");
         vm.prank(sweeper);
-        links.sweepExpired(LINK_ID);
+        links.sweepExpired(linkPubKey);
 
         assertEq(usdc.balanceOf(sender), senderBefore, "sender not refunded after sweep");
-        assertEq(uint256(links.getLink(LINK_ID).status), uint256(MozaikLinks.Status.Swept));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Swept));
     }
 }

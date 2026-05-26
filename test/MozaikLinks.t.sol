@@ -33,10 +33,10 @@ contract MozaikLinksTest is Test {
     MozaikLinks internal links;
     ERC20Mock internal usdc;
 
-    event LinkCreated(bytes32 indexed linkId, address indexed sender, uint256 amount, uint40 expiresAt);
-    event LinkClaimed(bytes32 indexed linkId, address indexed recipient, uint256 amount);
-    event LinkRevoked(bytes32 indexed linkId, address indexed sender, uint256 amount);
-    event LinkSwept(bytes32 indexed linkId, address indexed sender, uint256 amount);
+    event LinkCreated(address indexed claimSigner, address indexed sender, uint256 amount, uint64 expiresAt);
+    event LinkClaimed(address indexed claimSigner, address indexed recipient, uint256 amount);
+    event LinkRevoked(address indexed claimSigner, address indexed sender, uint256 amount);
+    event LinkSwept(address indexed claimSigner, address indexed sender, uint256 amount);
 
     function setUp() public {
         usdc = new ERC20Mock();
@@ -60,15 +60,15 @@ contract MozaikLinksTest is Test {
         );
     }
 
-    function _claimDigest(bytes32 linkId, address claimer) internal view returns (bytes32) {
-        bytes32 claimTypehash = keccak256("Claim(bytes32 linkId,address recipient)");
-        bytes32 structHash = keccak256(abi.encode(claimTypehash, linkId, claimer));
+    function _claimDigest(address claimSigner, address claimer) internal view returns (bytes32) {
+        bytes32 claimTypehash = keccak256("Claim(address claimSigner,address recipient)");
+        bytes32 structHash = keccak256(abi.encode(claimTypehash, claimSigner, claimer));
 
         return keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
     }
 
-    function _signClaim(uint256 privKey, bytes32 linkId, address claimer) internal view returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privKey, _claimDigest(linkId, claimer));
+    function _signClaim(uint256 privKey, address claimSigner, address claimer) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privKey, _claimDigest(claimSigner, claimer));
 
         return abi.encodePacked(r, s, v);
     }
@@ -85,111 +85,92 @@ contract MozaikLinksTest is Test {
     function test_CreateLink_ValidCreate() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         uint256 senderBefore = usdc.balanceOf(sender);
         uint256 escrowBefore = usdc.balanceOf(address(links));
 
         vm.expectEmit(true, true, true, true);
-        emit LinkCreated(linkId, sender, amount, expiry);
+        emit LinkCreated(linkPubKey, sender, amount, expiry);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         assertEq(usdc.balanceOf(sender), senderBefore - amount);
         assertEq(usdc.balanceOf(address(links)), escrowBefore + amount);
 
-        MozaikLinks.Link memory link = links.getLink(linkId);
+        MozaikLinks.Link memory link = links.getLink(linkPubKey);
 
         assertEq(link.sender, sender);
         assertEq(link.expiresAt, expiry);
         assertEq(uint256(link.status), uint256(MozaikLinks.Status.Active));
-        assertEq(link.claimSigner, linkPubKey);
         assertEq(link.amount, amount);
     }
 
-    function test_CreateLink_InvalidZeroLinkId() public {
+    function test_CreateLink_InvalidZeroClaimSigner() public {
         address sender = makeAddr("sender");
-        address linkPubKey = makeAddr("linkEphemeralKey");
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidInput.selector);
-        links.create(bytes32(0), linkPubKey, 10_000_000, expiry);
-    }
-
-    function test_CreateLink_InvalidZeroPubKey() public {
-        address sender = makeAddr("sender");
-        bytes32 linkId = keccak256("link-1");
-        uint40 expiry = uint40(block.timestamp + 1 days);
-        _fund(sender);
-
-        vm.prank(sender);
-        vm.expectRevert(MozaikLinks.InvalidInput.selector);
-        links.create(linkId, address(0), 10_000_000, expiry);
+        links.create(address(0), 10_000_000, expiry);
     }
 
     function test_CreateLink_InvalidZeroAmount() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidInput.selector);
-        links.create(linkId, linkPubKey, 0, expiry);
+        links.create(linkPubKey, 0, expiry);
     }
 
     function test_CreateLink_InvalidExpiryEqualsNow() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         _fund(sender);
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidInput.selector);
-        links.create(linkId, linkPubKey, 10_000_000, uint40(block.timestamp));
+        links.create(linkPubKey, 10_000_000, uint64(block.timestamp));
     }
 
     function test_CreateLink_InvalidExpiryInPast() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         _fund(sender);
         vm.warp(1000);
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidInput.selector);
-        links.create(linkId, linkPubKey, 10_000_000, uint40(999));
+        links.create(linkPubKey, 10_000_000, uint64(999));
     }
 
-    function test_CreateLink_InvalidDuplicateLinkId() public {
+    function test_CreateLink_InvalidDuplicateClaimSigner() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
     }
 
     function test_CreateLink_InvalidFeeOnTransferToken() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
 
         FeeOnTransferToken feeToken = new FeeOnTransferToken();
         MozaikLinks feeEscrow = new MozaikLinks(IERC20(address(feeToken)));
@@ -200,164 +181,156 @@ contract MozaikLinksTest is Test {
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidInput.selector);
-        feeEscrow.create(linkId, linkPubKey, amount, expiry);
+        feeEscrow.create(linkPubKey, amount, expiry);
     }
 
     function test_Claim_ValidClaim() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
-        bytes memory sig = _signClaim(linkPrivKey, linkId, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
         uint256 recipientBefore = usdc.balanceOf(recipient);
 
         vm.expectEmit(true, true, true, true);
-        emit LinkClaimed(linkId, recipient, amount);
+        emit LinkClaimed(linkPubKey, recipient, amount);
 
         vm.prank(recipient);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
 
         assertEq(usdc.balanceOf(recipient), recipientBefore + amount);
-        assertEq(uint256(links.getLink(linkId).status), uint256(MozaikLinks.Status.Claimed));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Claimed));
     }
 
     function test_Claim_InvalidNoneStatus() public {
         address recipient = makeAddr("recipient");
-        (, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
+        (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
 
-        bytes memory sig = _signClaim(linkPrivKey, linkId, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
 
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
     }
 
     function test_Claim_InvalidAlreadyClaimed() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
-        bytes memory sig = _signClaim(linkPrivKey, linkId, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
 
         vm.prank(recipient);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
 
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
     }
 
     function test_Claim_InvalidExpired() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry);
 
-        bytes memory sig = _signClaim(linkPrivKey, linkId, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
 
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
     }
 
     function test_Claim_InvalidPrivkey() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         (, uint256 wrongKey) = makeAddrAndKey("wrongKey");
-        bytes memory sig = _signClaim(wrongKey, linkId, recipient);
+        bytes memory sig = _signClaim(wrongKey, linkPubKey, recipient);
 
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidSignature.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
     }
 
     function test_Claim_InvalidSignatureDifferentRecipient() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         address other = makeAddr("other");
-        bytes memory sig = _signClaim(linkPrivKey, linkId, other);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, other);
 
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidSignature.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
     }
 
     function test_Claim_InvalidSignatureLength() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         bytes memory sig = hex"1234"; // 2 bytes, not 65
 
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidSignature.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
     }
 
     function test_Claim_InvalidSignatureUpperHalfS() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         // Produce a normal sig, then flip s to upper half (n - s) and v.
         // OZ's tryRecover rejects upper-half-s with RecoverError.InvalidSignatureS;
         // the contract must surface this as InvalidSignature, not OZ's error type.
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(linkPrivKey, _claimDigest(linkId, recipient));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(linkPrivKey, _claimDigest(linkPubKey, recipient));
         // secp256k1 curve order
         uint256 n = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
         bytes32 sFlipped = bytes32(n - uint256(s));
@@ -366,152 +339,145 @@ contract MozaikLinksTest is Test {
 
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidSignature.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
     }
 
     function test_Claim_InvalidZeroSignature() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         bytes memory sig = new bytes(65); // all zeros, length 65
 
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidSignature.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
     }
 
     function test_Revoke_ValidRevoke() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         uint256 senderBefore = usdc.balanceOf(sender);
 
         vm.expectEmit(true, true, true, true);
-        emit LinkRevoked(linkId, sender, amount);
+        emit LinkRevoked(linkPubKey, sender, amount);
 
         vm.prank(sender);
-        links.revoke(linkId);
+        links.revoke(linkPubKey);
 
         assertEq(usdc.balanceOf(sender), senderBefore + amount);
-        assertEq(uint256(links.getLink(linkId).status), uint256(MozaikLinks.Status.Revoked));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Revoked));
     }
 
     function test_Revoke_InvalidInactive() public {
         address sender = makeAddr("sender");
-        bytes32 linkId = keccak256("link-1");
+        address linkPubKey = makeAddr("linkEphemeralKey");
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.revoke(linkId);
+        links.revoke(linkPubKey);
     }
 
     function test_Revoke_InvalidCallByNonSender() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         address attacker = makeAddr("attacker");
 
         vm.prank(attacker);
         vm.expectRevert(MozaikLinks.InvalidOwner.selector);
-        links.revoke(linkId);
+        links.revoke(linkPubKey);
     }
 
     function test_Revoke_InvalidExpired() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry);
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.revoke(linkId);
+        links.revoke(linkPubKey);
     }
 
     function test_SweepExpired_ValidSweep() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry);
 
         uint256 senderBefore = usdc.balanceOf(sender);
 
         vm.expectEmit(true, true, true, true);
-        emit LinkSwept(linkId, sender, amount);
+        emit LinkSwept(linkPubKey, sender, amount);
 
-        links.sweepExpired(linkId);
+        links.sweepExpired(linkPubKey);
 
         assertEq(usdc.balanceOf(sender), senderBefore + amount);
-        assertEq(uint256(links.getLink(linkId).status), uint256(MozaikLinks.Status.Swept));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Swept));
     }
 
     function test_SweepExpired_InvalidInactive() public {
-        bytes32 linkId = keccak256("link-1");
+        address linkPubKey = makeAddr("linkEphemeralKey");
 
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.sweepExpired(linkId);
+        links.sweepExpired(linkPubKey);
     }
 
     function test_SweepExpired_InvalidNotExpired() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.sweepExpired(linkId);
+        links.sweepExpired(linkPubKey);
     }
 
     function test_SweepExpired_ValidPermissionlessCall() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry);
 
@@ -520,7 +486,7 @@ contract MozaikLinksTest is Test {
         uint256 callerBefore = usdc.balanceOf(randomCaller);
 
         vm.prank(randomCaller);
-        links.sweepExpired(linkId);
+        links.sweepExpired(linkPubKey);
 
         // Funds go to the sender, not the caller.
         assertEq(usdc.balanceOf(sender), senderBefore + amount);
@@ -531,198 +497,188 @@ contract MozaikLinksTest is Test {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry);
-        bytes memory sig = _signClaim(linkPrivKey, linkId, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
 
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
     }
 
     function test_Revoke_InvalidAtExpiresAt() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry);
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.revoke(linkId);
+        links.revoke(linkPubKey);
     }
 
     function test_SweepExpired_ValidAtExpiresAt() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry);
 
-        links.sweepExpired(linkId);
-        assertEq(uint256(links.getLink(linkId).status), uint256(MozaikLinks.Status.Swept));
+        links.sweepExpired(linkPubKey);
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Swept));
     }
 
     function test_Claim_ValidOneSecondBeforeExpiry() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry - 1);
-        bytes memory sig = _signClaim(linkPrivKey, linkId, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
 
         vm.prank(recipient);
-        links.claim(linkId, sig);
-        assertEq(uint256(links.getLink(linkId).status), uint256(MozaikLinks.Status.Claimed));
+        links.claim(linkPubKey, sig);
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Claimed));
     }
 
     function test_Revoke_ValidOneSecondBeforeExpiry() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry - 1);
 
         vm.prank(sender);
-        links.revoke(linkId);
-        assertEq(uint256(links.getLink(linkId).status), uint256(MozaikLinks.Status.Revoked));
+        links.revoke(linkPubKey);
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Revoked));
     }
 
     function test_SweepExpired_InvalidOneSecondBeforeExpiry() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry - 1);
 
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.sweepExpired(linkId);
+        links.sweepExpired(linkPubKey);
     }
 
     function test_Monotonic_ClaimedRejectsOthers() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
-        bytes memory sig = _signClaim(linkPrivKey, linkId, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
         vm.prank(recipient);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.revoke(linkId);
+        links.revoke(linkPubKey);
 
         vm.warp(expiry);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.sweepExpired(linkId);
+        links.sweepExpired(linkPubKey);
     }
 
     function test_Monotonic_RevokedRejectsOthers() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.prank(sender);
-        links.revoke(linkId);
+        links.revoke(linkPubKey);
 
-        bytes memory sig = _signClaim(linkPrivKey, linkId, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
 
         vm.warp(expiry);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.sweepExpired(linkId);
+        links.sweepExpired(linkPubKey);
     }
 
     function test_Monotonic_SweptRejectsOthers() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         vm.warp(expiry);
-        links.sweepExpired(linkId);
+        links.sweepExpired(linkPubKey);
 
-        bytes memory sig = _signClaim(linkPrivKey, linkId, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
         vm.prank(recipient);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
 
         vm.prank(sender);
         vm.expectRevert(MozaikLinks.InvalidLink.selector);
-        links.revoke(linkId);
+        links.revoke(linkPubKey);
     }
 
     function test_DustTransfer_NoEffectOnClaim() public {
         address sender = makeAddr("sender");
         address recipient = makeAddr("recipient");
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
         // Anyone can transfer USDC directly to the contract; that should not affect link.amount
         // and the dust should remain after claim.
@@ -730,9 +686,9 @@ contract MozaikLinksTest is Test {
         usdc.mint(address(this), dust);
         usdc.transfer(address(links), dust);
 
-        bytes memory sig = _signClaim(linkPrivKey, linkId, recipient);
+        bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
         vm.prank(recipient);
-        links.claim(linkId, sig);
+        links.claim(linkPubKey, sig);
 
         assertEq(usdc.balanceOf(recipient), amount, "claim must pay only link.amount");
         assertEq(usdc.balanceOf(address(links)), dust, "dust remains in escrow");
@@ -741,9 +697,8 @@ contract MozaikLinksTest is Test {
     function test_DustTransfer_NoEffectBeforeCreate() public {
         address sender = makeAddr("sender");
         address linkPubKey = makeAddr("linkEphemeralKey");
-        bytes32 linkId = keccak256("link-1");
         uint256 amount = 10_000_000;
-        uint40 expiry = uint40(block.timestamp + 1 days);
+        uint64 expiry = uint64(block.timestamp + 1 days);
         _fund(sender);
 
         // Transfer dust BEFORE creating a link. The exact-amount check measures delta only,
@@ -752,9 +707,9 @@ contract MozaikLinksTest is Test {
         usdc.transfer(address(links), 999);
 
         vm.prank(sender);
-        links.create(linkId, linkPubKey, amount, expiry);
+        links.create(linkPubKey, amount, expiry);
 
-        MozaikLinks.Link memory link = links.getLink(linkId);
+        MozaikLinks.Link memory link = links.getLink(linkPubKey);
         assertEq(link.amount, amount);
         assertEq(usdc.balanceOf(address(links)), 999 + amount);
     }
