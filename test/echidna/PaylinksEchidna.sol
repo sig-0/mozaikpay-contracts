@@ -17,20 +17,21 @@ contract MintableERC20 is ERC20 {
 
 /// @notice Echidna fuzz target for MozaikLinks.
 /// @dev Echidna can't generate valid ECDSA signatures, so this target focuses on the
-///      non-cryptographic state machine: createLink, revoke, sweepExpired, direct dust
-///      transfers, and the invariants the contract must hold across them.
+///      non-cryptographic state machine: createLink, reclaim (sender-only pre-expiry,
+///      permissionless post-expiry), direct dust transfers, and the invariants the
+///      contract must hold across them.
 ///
 ///      Key invariant: sum(active amounts) <= USDC.balanceOf(escrow). The handler tracks
 ///      a ghost `activeTotal` that increments on successful create and decrements on
-///      successful revoke/sweep; the property compares against the contract's USDC balance.
+///      successful reclaim; the property compares against the contract's USDC balance.
 contract PaylinksEchidna {
     MozaikLinks public links;
     MintableERC20 public usdc;
 
     uint256 public activeTotal;
     uint256 public createCount;
-    uint256 public revokeCount;
-    uint256 public sweepCount;
+    uint256 public reclaimSenderCount;
+    uint256 public reclaimPermissionlessCount;
     bool public statusEverWentBackwards;
 
     address[] internal _signers;
@@ -56,7 +57,7 @@ contract PaylinksEchidna {
         // Cap amount to avoid silly values that overflow ghosts; 1B units is plenty.
         if (amount > 1_000_000_000) amount = 1_000_000_000;
 
-        // Cap expiry to Echidna's default maxTimeDelay window (1 week) so sweepExpired is reachable.
+        // Cap expiry to Echidna's default maxTimeDelay window (1 week) so post-expiry reclaim is reachable.
         if (expiryOffset > 7 days) expiryOffset = uint64((uint256(expiryOffset) % 7 days) + 1);
 
         uint64 expiresAt = uint64(block.timestamp) + uint64(expiryOffset);
@@ -64,7 +65,7 @@ contract PaylinksEchidna {
 
         usdc.mint(SENDER, amount);
 
-        // The "sender" is a fixed pseudo-EOA so revoke is testable from a single principal.
+        // The "sender" is a fixed pseudo-EOA so the sender-only path is testable from a single principal.
         // Echidna can't `vm.prank`; we route through a tiny shim that approves+forwards.
         _proxyCreate(claimSigner, amount, expiresAt);
 
@@ -76,17 +77,16 @@ contract PaylinksEchidna {
         _trackStatus(claimSigner);
     }
 
-    function tryRevoke(uint96 idIndex) external {
+    function tryReclaimAsSender(uint96 idIndex) external {
         if (_signers.length == 0) return;
         address claimSigner = _signers[idIndex % _signers.length];
 
         MozaikLinks.Link memory link = links.getLink(claimSigner);
         if (link.status != MozaikLinks.Status.Active) return;
-        if (block.timestamp >= link.expiresAt) return; // revoke pre-expiry only
 
-        try EchidnaSenderShim(senderShim()).revoke(claimSigner) {
+        try EchidnaSenderShim(senderShim()).reclaim(claimSigner) {
             activeTotal -= link.amount;
-            revokeCount += 1;
+            reclaimSenderCount += 1;
         } catch {
             // Revert is acceptable in fuzzing (fuzzer ignores and moves on)
         }
@@ -94,7 +94,7 @@ contract PaylinksEchidna {
         _trackStatus(claimSigner);
     }
 
-    function trySweepExpired(uint96 idIndex) external {
+    function tryReclaimPermissionless(uint96 idIndex) external {
         if (_signers.length == 0) return;
         address claimSigner = _signers[idIndex % _signers.length];
 
@@ -102,9 +102,9 @@ contract PaylinksEchidna {
         if (link.status != MozaikLinks.Status.Active) return;
         if (block.timestamp < link.expiresAt) return;
 
-        try links.sweepExpired(claimSigner) {
+        try links.reclaim(claimSigner) {
             activeTotal -= link.amount;
-            sweepCount += 1;
+            reclaimPermissionlessCount += 1;
         } catch {}
 
         _trackStatus(claimSigner);
@@ -122,12 +122,12 @@ contract PaylinksEchidna {
         return activeTotal <= usdc.balanceOf(address(links));
     }
 
-    /// @notice A link's status enum value is monotonic: None(0) -> Active(1) -> {Claimed(2), Revoked(3), Swept(4)}.
+    /// @notice A link's status enum value is monotonic: None(0) -> Active(1) -> {Claimed(2), Reclaimed(3)}.
     function echidna_status_monotonic() external view returns (bool) {
         return !statusEverWentBackwards;
     }
 
-    /// @notice Read-only sanity: the contract holds at least the sum of all unrevoked, unswept
+    /// @notice Read-only sanity: the contract holds at least the sum of all unreclaimed
     ///         active link amounts, and any dust on top.
     function echidna_balance_ge_active() external view returns (bool) {
         return usdc.balanceOf(address(links)) >= activeTotal;
@@ -160,7 +160,7 @@ contract PaylinksEchidna {
     }
 }
 
-/// @dev Standalone "sender" contract so revoke (msg.sender == link.sender) and create work without cheatcodes.
+/// @dev Standalone "sender" contract so reclaim (msg.sender == link.sender) and create work without cheatcodes.
 contract EchidnaSenderShim {
     MozaikLinks public links;
     MintableERC20 public usdc;
@@ -176,7 +176,7 @@ contract EchidnaSenderShim {
         links.create(claimSigner, amount, expiresAt);
     }
 
-    function revoke(address claimSigner) external {
-        links.revoke(claimSigner);
+    function reclaim(address claimSigner) external {
+        links.reclaim(claimSigner);
     }
 }

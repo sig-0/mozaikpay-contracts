@@ -100,7 +100,7 @@ contract MozaikLinksForkTest is Test {
         assertEq(uint256(link.status), uint256(MozaikLinks.Status.Claimed));
     }
 
-    function test_Fork_RevokeReturnsFunds() public onlyFork {
+    function test_Fork_ReclaimPreExpiryBySender() public onlyFork {
         _setupFork();
 
         uint256 senderBefore = usdc.balanceOf(sender);
@@ -109,13 +109,13 @@ contract MozaikLinksForkTest is Test {
         links.create(linkPubKey, AMOUNT, uint64(block.timestamp + 1 hours));
 
         vm.prank(sender);
-        links.revoke(linkPubKey);
+        links.reclaim(linkPubKey);
 
-        assertEq(usdc.balanceOf(sender), senderBefore, "sender not refunded after revoke");
-        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Revoked));
+        assertEq(usdc.balanceOf(sender), senderBefore, "sender not refunded after reclaim");
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Reclaimed));
     }
 
-    function test_Fork_SweepExpiredAfterTTL() public onlyFork {
+    function test_Fork_ReclaimPostExpiryPermissionless() public onlyFork {
         _setupFork();
 
         uint256 senderBefore = usdc.balanceOf(sender);
@@ -126,12 +126,12 @@ contract MozaikLinksForkTest is Test {
 
         vm.warp(expiresAt + 1);
 
-        // Permissionless: a third party can call sweep; funds still go to the sender.
+        // Permissionless after expiry: a third party can reclaim; funds still go to the sender.
         address sweeper = makeAddr("sweeper");
         vm.prank(sweeper);
-        links.sweepExpired(linkPubKey);
+        links.reclaim(linkPubKey);
 
-        assertEq(usdc.balanceOf(sender), senderBefore, "sender not refunded after sweep");
-        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Swept));
+        assertEq(usdc.balanceOf(sender), senderBefore, "sender not refunded after reclaim");
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Reclaimed));
     }
 }

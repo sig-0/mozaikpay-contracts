@@ -5,6 +5,7 @@ import {Script, console} from "forge-std/Script.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {MozaikAccountFactory} from "../src/account/MozaikAccountFactory.sol";
 import {MozaikVerifyingPaymaster} from "../src/paymaster/MozaikVerifyingPaymaster.sol";
+import {MozaikLinks} from "../src/paylinks/MozaikLinks.sol";
 
 contract VerifyDeployScript is Script {
     address internal constant ENTRY_POINT_V09 = 0x433709009B8330FDa32311DF1C2AFA402eD8D009;
@@ -12,6 +13,10 @@ contract VerifyDeployScript is Script {
     function run() external view {
         address factoryAddr = vm.envAddress("FACTORY_ADDRESS");
         address paymasterAddr = vm.envAddress("PAYMASTER_ADDRESS");
+        // Paylinks is deployed separately; verify it only when the operator
+        // supplies the address, so the script still works for stacks that
+        // haven't shipped it yet.
+        address paylinksAddr = vm.envOr("PAYLINKS_ADDRESS", address(0));
 
         MozaikAccountFactory factory = MozaikAccountFactory(factoryAddr);
         MozaikVerifyingPaymaster paymaster = MozaikVerifyingPaymaster(payable(paymasterAddr));
@@ -35,6 +40,20 @@ contract VerifyDeployScript is Script {
         console.log("Owner:          ", paymaster.owner());
         console.log("Pending owner:  ", paymaster.pendingOwner());
         console.log("EP balance:     ", epBalance);
+
+        if (paylinksAddr != address(0)) {
+            MozaikLinks paylinks = MozaikLinks(paylinksAddr);
+            address usdc = address(paylinks.USDC());
+
+            require(paylinksAddr.code.length > 0, "Paylinks has no code");
+            require(usdc != address(0), "Paylinks USDC not set");
+            require(usdc.code.length > 0, "Paylinks USDC has no code");
+
+            console.log("--- Paylinks ---");
+            console.log("Paylinks:       ", paylinksAddr);
+            console.log("USDC:           ", usdc);
+        }
+
         console.log("--- All checks passed ---");
     }
 }

@@ -128,20 +128,19 @@ contract LinksHandler is Test {
         _checkMonotonic(claimSigner);
     }
 
-    function revoke(uint256 idIndex) external {
+    function reclaimAsSender(uint256 idIndex) external {
         if (_signers.length == 0) return;
         address claimSigner = _signers[bound(idIndex, 0, _signers.length - 1)];
         if (!_isActive[claimSigner]) return;
-        if (block.timestamp >= _expiresAt[claimSigner]) return;
 
         vm.prank(sender);
-        links.revoke(claimSigner);
+        links.reclaim(claimSigner);
 
         _isActive[claimSigner] = false;
         _checkMonotonic(claimSigner);
     }
 
-    function sweepExpired(uint256 idIndex, address caller) external {
+    function reclaimPermissionless(uint256 idIndex, address caller) external {
         if (_signers.length == 0) return;
         address claimSigner = _signers[bound(idIndex, 0, _signers.length - 1)];
         if (!_isActive[claimSigner]) return;
@@ -150,7 +149,7 @@ contract LinksHandler is Test {
         caller = address(uint160(bound(uint256(uint160(caller)), 100, type(uint160).max)));
 
         vm.prank(caller);
-        links.sweepExpired(claimSigner);
+        links.reclaim(claimSigner);
 
         _isActive[claimSigner] = false;
         _checkMonotonic(claimSigner);
@@ -188,8 +187,8 @@ contract MozaikLinksInvariantTest is Test {
         bytes4[] memory selectors = new bytes4[](6);
         selectors[0] = LinksHandler.create.selector;
         selectors[1] = LinksHandler.claim.selector;
-        selectors[2] = LinksHandler.revoke.selector;
-        selectors[3] = LinksHandler.sweepExpired.selector;
+        selectors[2] = LinksHandler.reclaimAsSender.selector;
+        selectors[3] = LinksHandler.reclaimPermissionless.selector;
         selectors[4] = LinksHandler.dustTransfer.selector;
         selectors[5] = LinksHandler.warpForward.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));

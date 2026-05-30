@@ -22,8 +22,9 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
  *        front-running: a mempool watcher who copies the calldata cannot redirect
  *        the funds to themselves because the signature is over the original
  *        claimer's address.
- *      - revoke(): sender-only cancel before expiry. Funds return to sender.
- *      - sweepExpired(): permissionless reclaim at/after expiry. Funds return to sender.
+ *      - reclaim(): unified recovery path. Pre-expiry the sender alone can call to
+ *        cancel an active link; at or after expiry anyone may call to recycle the
+ *        escrow. Funds always return to the original sender.
  *
  */
 contract MozaikLinks is ReentrancyGuardTransient, EIP712 {
@@ -34,8 +35,7 @@ contract MozaikLinks is ReentrancyGuardTransient, EIP712 {
         None,
         Active,
         Claimed,
-        Revoked,
-        Swept
+        Reclaimed
     }
 
     /// @dev Slot-packed: sender(20) + expiresAt(8) + status(1) fit in slot 0;
@@ -62,8 +62,7 @@ contract MozaikLinks is ReentrancyGuardTransient, EIP712 {
 
     event LinkCreated(address indexed claimSigner, address indexed sender, uint256 amount, uint64 expiresAt);
     event LinkClaimed(address indexed claimSigner, address indexed recipient, uint256 amount);
-    event LinkRevoked(address indexed claimSigner, address indexed sender, uint256 amount);
-    event LinkSwept(address indexed claimSigner, address indexed sender, uint256 amount);
+    event LinkReclaimed(address indexed claimSigner, address indexed sender, uint256 amount);
 
     /**
      * @param usdc The USDC token address. Set once and immutable.
@@ -130,42 +129,27 @@ contract MozaikLinks is ReentrancyGuardTransient, EIP712 {
     }
 
     /**
-     * @notice Cancel an active link before expiry. Sender-only.
-     * @dev    Past expiry, the only path to reclaim funds is `sweepExpired`.
+     * @notice Return an active link's escrow to the original sender.
+     * @dev    Pre-expiry the caller must be the link's sender (cancel). At or after
+     *         expiry the call is permissionless so anyone (sender, sender's bot, or
+     *         a third party) can pay the gas to recycle dust. Funds always return to
+     *         the original sender, regardless of caller.
      */
-    function revoke(address claimSigner) external nonReentrant {
+    function reclaim(address claimSigner) external nonReentrant {
         Link storage link = _links[claimSigner];
 
         if (link.status != Status.Active) revert InvalidLink();
-        if (link.sender != msg.sender) revert InvalidOwner();
-        if (block.timestamp >= link.expiresAt) revert InvalidLink();
+
+        if (block.timestamp < link.expiresAt && link.sender != msg.sender) {
+            revert InvalidOwner();
+        }
 
         uint256 amount = link.amount;
-        link.status = Status.Revoked;
+        link.status = Status.Reclaimed;
 
         USDC.safeTransfer(link.sender, amount);
 
-        emit LinkRevoked(claimSigner, link.sender, amount);
-    }
-
-    /**
-     * @notice Reclaim funds for an expired, never-claimed link. Permissionless.
-     * @dev    Funds always return to the original sender, regardless of caller. Anyone
-     *         can pay the gas to recycle dust links - sender, sender's bot, or a third
-     *         party.
-     */
-    function sweepExpired(address claimSigner) external nonReentrant {
-        Link storage link = _links[claimSigner];
-
-        if (link.status != Status.Active) revert InvalidLink();
-        if (block.timestamp < link.expiresAt) revert InvalidLink();
-
-        uint256 amount = link.amount;
-        link.status = Status.Swept;
-
-        USDC.safeTransfer(link.sender, amount);
-
-        emit LinkSwept(claimSigner, link.sender, amount);
+        emit LinkReclaimed(claimSigner, link.sender, amount);
     }
 
     /**
