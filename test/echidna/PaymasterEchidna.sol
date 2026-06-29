@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {EntryPoint} from "account-abstraction/core/EntryPoint.sol";
 import {MozaikVerifyingPaymaster} from "../../src/paymaster/MozaikVerifyingPaymaster.sol";
 
 contract PaymasterEchidna {
     bytes8 internal constant PAYMASTER_SIG_MAGIC = 0x22e325a297439656;
+    address internal constant ENTRY_POINT_V09 = 0x433709009B8330FDa32311DF1C2AFA402eD8D009;
     EntryPoint internal entryPoint;
     MozaikVerifyingPaymaster internal paymaster;
 
@@ -19,8 +19,8 @@ contract PaymasterEchidna {
 
     constructor() payable {
         SIGNER_ADDR = _ecrecover(0);
-        entryPoint = new EntryPoint();
-        paymaster = new MozaikVerifyingPaymaster(IEntryPoint(address(entryPoint)), _signerAddress());
+        entryPoint = EntryPoint(payable(ENTRY_POINT_V09));
+        paymaster = new MozaikVerifyingPaymaster(_signerAddress());
     }
 
     function echidna_unsigned_op_never_sponsored() external returns (bool) {

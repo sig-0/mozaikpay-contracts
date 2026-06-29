@@ -59,9 +59,18 @@ L1_GAS_ORACLE="0x420000000000000000000000000000000000000F"
 cast rpc anvil_setCode "$L1_GAS_ORACLE" '"0x60206000f3"' --rpc-url $RPC > /dev/null
 echo "L1 gas oracle mock deployed at $L1_GAS_ORACLE"
 
-# === Deploy Mozaik contracts ===
+# === Deploy mock USDC (paylinks token) ===
+# The e2e chain has no canonical USDC, so deploy a mock and pass it to 01_Deploy
+# via USDC_ADDRESS, overriding the per-chain default baked into the script.
+echo "Deploying mock USDC..."
+USDC=$(forge create lib/openzeppelin-contracts/contracts/mocks/token/ERC20Mock.sol:ERC20Mock \
+  --rpc-url $RPC \
+  --private-key $DEPLOYER_KEY \
+  --broadcast --json | grep -oE '"deployedTo":[^,]*0x[0-9a-fA-F]{40}' | grep -oE '0x[0-9a-fA-F]{40}')
+
+# === Deploy Mozaik contracts (factory + paymaster + paylinks) ===
 echo "Deploying contracts..."
-OUTPUT=$(SPONSOR_ADDRESS=$SPONSOR_ADDRESS \
+OUTPUT=$(SPONSOR_ADDRESS=$SPONSOR_ADDRESS USDC_ADDRESS=$USDC \
   forge script script/01_Deploy.s.sol \
   --rpc-url $RPC \
   --broadcast \
@@ -72,14 +81,17 @@ echo "$OUTPUT"
 # Parse addresses from forge console.log output
 FACTORY=$(echo "$OUTPUT" | grep 'Factory:' | grep -oE '0x[0-9a-fA-F]{40}')
 PAYMASTER=$(echo "$OUTPUT" | grep 'Paymaster:' | grep -oE '0x[0-9a-fA-F]{40}')
+PAYLINKS=$(echo "$OUTPUT" | grep 'Paylinks:' | grep -oE '0x[0-9a-fA-F]{40}')
 
-if [ -z "$FACTORY" ] || [ -z "$PAYMASTER" ]; then
-  echo "ERROR: Failed to parse deployed addresses from forge output"
+if [ -z "$USDC" ] || [ -z "$FACTORY" ] || [ -z "$PAYMASTER" ] || [ -z "$PAYLINKS" ]; then
+  echo "ERROR: Failed to deploy or parse the contract stack"
   exit 1
 fi
 
+echo "USDC:      $USDC"
 echo "Factory:   $FACTORY"
 echo "Paymaster: $PAYMASTER"
+echo "Paylinks:  $PAYLINKS"
 
 # Fund paymaster EntryPoint deposit (100 ETH)
 echo "Funding paymaster deposit..."
@@ -92,11 +104,13 @@ cast send "$PAYMASTER" "deposit()" \
 cat > "$SCRIPT_DIR/.env.e2e" <<EOF
 FACTORY_ADDRESS=$FACTORY
 PAYMASTER_ADDRESS=$PAYMASTER
+PAYLINKS_ADDRESS=$PAYLINKS
 EOF
 
-# Verify the deployment
+# Verify the full deployed stack. Pass every address explicitly so forge does not
+# pick up a stale value from a developer's local .env.
 echo "Verifying contracts..."
-OUTPUT=$(FACTORY_ADDRESS=$FACTORY PAYMASTER_ADDRESS=$PAYMASTER \
+OUTPUT=$(FACTORY_ADDRESS=$FACTORY PAYMASTER_ADDRESS=$PAYMASTER PAYLINKS_ADDRESS=$PAYLINKS \
   forge script script/VerifyDeploy.s.sol \
   --rpc-url $RPC 2>&1)
 

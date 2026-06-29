@@ -84,7 +84,7 @@ echidna: echidna-paymaster echidna-account echidna-paylinks
 
 .PHONY: echidna-paymaster
 echidna-paymaster:
-	echidna test/echidna/PaymasterEchidna.sol --contract PaymasterEchidna --config echidna.yaml
+	echidna test/echidna/PaymasterEchidna.sol --contract PaymasterEchidna --config echidna-paymaster.yaml
 
 .PHONY: echidna-account
 echidna-account:
@@ -111,9 +111,10 @@ anvil-fork:
 anvil-fork-mainnet:
 	anvil --fork-url "$(BASE_MAINNET_RPC)"
 
-# Deployment
+# Deployment (factory + paymaster + paylinks)
 # Add --broadcast to send (dry-run by default).
-# Requires SPONSOR_ADDRESS in the env.
+# Requires SPONSOR_ADDRESS in the env. The paylinks token defaults to the canonical
+# USDC for the target chain (Base mainnet/sepolia); export USDC_ADDRESS to override.
 # The broadcaster is determined by the --account keystore flag or PRIVATE_KEY.
 
 .PHONY: deploy-sepolia
@@ -158,22 +159,6 @@ transfer-ownership-mainnet:
 		--rpc-url base_mainnet \
 		$(EXTRA)
 
-# Paylinks escrow deployment
-# Requires USDC_ADDRESS in the env (Base Sepolia: 0x036CbD53842c5426634e7929541eC2318f3dCF7e,
-# Base mainnet: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913).
-
-.PHONY: deploy-paylinks-sepolia
-deploy-paylinks-sepolia:
-	forge script script/04_DeployPaylinks.s.sol \
-		--rpc-url base_sepolia \
-		$(EXTRA)
-
-.PHONY: deploy-paylinks-mainnet
-deploy-paylinks-mainnet:
-	forge script script/04_DeployPaylinks.s.sol \
-		--rpc-url base_mainnet \
-		$(EXTRA)
-
 # Dev: fund a wallet with mock USDC (transfers from pre-funded deployer)
 # Requires TO and AMOUNT (in whole USDC, e.g. 1000) in the env.
 # Uses Anvil account #0 as the sender.
@@ -190,7 +175,7 @@ dev-fund:
 		--broadcast
 
 # Post-deploy verification
-# Requires FACTORY_ADDRESS and PAYMASTER_ADDRESS in the env.
+# Requires FACTORY_ADDRESS, PAYMASTER_ADDRESS, and PAYLINKS_ADDRESS in the env.
 
 .PHONY: verify-sepolia
 verify-sepolia:

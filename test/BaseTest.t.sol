@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EntryPoint} from "account-abstraction/core/EntryPoint.sol";
-import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 
 import {MozaikAccount} from "../src/account/MozaikAccount.sol";
@@ -49,9 +48,10 @@ abstract contract BaseTest is Test {
         attacker = makeAddr("attacker");
 
         usdc = new ERC20Mock();
-        localEntryPoint = new EntryPoint();
-        factory = new MozaikAccountFactory(IEntryPoint(address(localEntryPoint)));
-        paymaster = new MozaikVerifyingPaymaster(IEntryPoint(address(localEntryPoint)), verifyingSignerAddr);
+        deployCodeTo("EntryPoint.sol:EntryPoint", ENTRY_POINT_V09);
+        localEntryPoint = EntryPoint(payable(ENTRY_POINT_V09));
+        factory = new MozaikAccountFactory();
+        paymaster = new MozaikVerifyingPaymaster(verifyingSignerAddr);
         accountImpl = factory.ACCOUNT_IMPLEMENTATION();
 
         vm.deal(owner, 10 ether);

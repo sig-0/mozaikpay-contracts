@@ -27,6 +27,11 @@ contract MozaikAccountFactory {
     ISenderCreator public immutable SENDER_CREATOR;
 
     /**
+     * @dev ERC-4337 EntryPoint v0.9, the canonical deployment on every supported chain.
+     */
+    address internal constant ENTRY_POINT_V09 = 0x433709009B8330FDa32311DF1C2AFA402eD8D009;
+
+    /**
      * @notice Emitted when a new account proxy is deployed.
      * @param account       The address of the newly deployed proxy.
      * @param spendingSigner The spending signer the account was initialized with.
@@ -50,11 +55,13 @@ contract MozaikAccountFactory {
     error DuplicateSigners();
 
     /**
-     * @param _entryPoint The ERC-4337 EntryPoint. Used to resolve the SenderCreator address.
+     * @dev Deploys the account implementation and resolves the SenderCreator from the canonical
+     *      EntryPoint. The EntryPoint is fixed, not configurable, so the factory's deployment
+     *      authority cannot diverge from the account's runtime EntryPoint.
      */
-    constructor(IEntryPoint _entryPoint) {
+    constructor() {
         ACCOUNT_IMPLEMENTATION = new MozaikAccount();
-        SENDER_CREATOR = _entryPoint.senderCreator();
+        SENDER_CREATOR = IEntryPoint(ENTRY_POINT_V09).senderCreator();
     }
 
     /**

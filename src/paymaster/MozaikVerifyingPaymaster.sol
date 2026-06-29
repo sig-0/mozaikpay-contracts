@@ -32,6 +32,11 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
     address public sponsor;
 
     /**
+     * @dev ERC-4337 EntryPoint v0.9, the canonical deployment on every supported chain.
+     */
+    address internal constant ENTRY_POINT_V09 = 0x433709009B8330FDa32311DF1C2AFA402eD8D009;
+
+    /**
      * @notice Emitted when the sponsor address is updated.
      * @param oldSponsor The previous sponsor address.
      * @param newSponsor The new sponsor address.
@@ -44,10 +49,11 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
     error ZeroAddress();
 
     /**
-     * @param _entryPoint The ERC-4337 EntryPoint this paymaster is staked with.
-     * @param _sponsor    The initial backend signing address.
+     * @param _sponsor The initial backend signing address.
+     * @dev The EntryPoint is fixed to the canonical v0.9 deployment, not configurable, so it
+     *      cannot diverge from the account and factory EntryPoint.
      */
-    constructor(IEntryPoint _entryPoint, address _sponsor) BasePaymaster(_entryPoint, msg.sender) {
+    constructor(address _sponsor) BasePaymaster(IEntryPoint(ENTRY_POINT_V09), msg.sender) {
         if (_sponsor == address(0)) revert ZeroAddress();
 
         sponsor = _sponsor;

@@ -41,8 +41,8 @@ contract UserOpFlowTest is BaseTest {
         usdc = new ERC20Mock();
 
         forkEp = IEntryPoint(ENTRY_POINT_V09);
-        forkPaymaster = new MozaikVerifyingPaymaster(forkEp, verifyingSignerAddr);
-        forkFactory = new MozaikAccountFactory(forkEp);
+        forkPaymaster = new MozaikVerifyingPaymaster(verifyingSignerAddr);
+        forkFactory = new MozaikAccountFactory();
 
         forkPaymaster.deposit{value: 1 ether}();
 

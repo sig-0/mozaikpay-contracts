@@ -383,7 +383,7 @@ contract E2ETest is Test {
 
         // Step 8: New Factory + Cross-Version Upgrade
         // Deploy a new factory (which creates a fresh MozaikAccount implementation)
-        MozaikAccountFactory newFactory = new MozaikAccountFactory(ep);
+        MozaikAccountFactory newFactory = new MozaikAccountFactory();
         MozaikAccount newImpl = newFactory.ACCOUNT_IMPLEMENTATION();
         assertTrue(address(newImpl) != address(factory.ACCOUNT_IMPLEMENTATION()), "new impl should differ");
 

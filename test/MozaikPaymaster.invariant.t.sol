@@ -2,7 +2,6 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {EntryPoint} from "account-abstraction/core/EntryPoint.sol";
 
@@ -11,6 +10,7 @@ import {MozaikVerifyingPaymaster} from "../src/paymaster/MozaikVerifyingPaymaste
 
 contract PaymasterHandler is Test {
     bytes8 internal constant PAYMASTER_SIG_MAGIC = 0x22e325a297439656;
+    address internal constant ENTRY_POINT_V09 = 0x433709009B8330FDa32311DF1C2AFA402eD8D009;
 
     EntryPoint public entryPoint;
     MozaikVerifyingPaymaster public paymaster;
@@ -30,9 +30,10 @@ contract PaymasterHandler is Test {
         (, verifyingSignerKey) = makeAddrAndKey("verifyingSigner");
         verifyingSignerAddr = vm.addr(verifyingSignerKey);
 
-        entryPoint = new EntryPoint();
-        factory = new MozaikAccountFactory(IEntryPoint(address(entryPoint)));
-        paymaster = new MozaikVerifyingPaymaster(IEntryPoint(address(entryPoint)), verifyingSignerAddr);
+        deployCodeTo("EntryPoint.sol:EntryPoint", ENTRY_POINT_V09);
+        entryPoint = EntryPoint(payable(ENTRY_POINT_V09));
+        factory = new MozaikAccountFactory();
+        paymaster = new MozaikVerifyingPaymaster(verifyingSignerAddr);
 
         vm.deal(address(this), 100 ether);
     }

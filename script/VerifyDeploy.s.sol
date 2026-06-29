@@ -13,10 +13,7 @@ contract VerifyDeployScript is Script {
     function run() external view {
         address factoryAddr = vm.envAddress("FACTORY_ADDRESS");
         address paymasterAddr = vm.envAddress("PAYMASTER_ADDRESS");
-        // Paylinks is deployed separately; verify it only when the operator
-        // supplies the address, so the script still works for stacks that
-        // haven't shipped it yet.
-        address paylinksAddr = vm.envOr("PAYLINKS_ADDRESS", address(0));
+        address paylinksAddr = vm.envAddress("PAYLINKS_ADDRESS");
 
         MozaikAccountFactory factory = MozaikAccountFactory(factoryAddr);
         MozaikVerifyingPaymaster paymaster = MozaikVerifyingPaymaster(payable(paymasterAddr));
@@ -41,18 +38,14 @@ contract VerifyDeployScript is Script {
         console.log("Pending owner:  ", paymaster.pendingOwner());
         console.log("EP balance:     ", epBalance);
 
-        if (paylinksAddr != address(0)) {
-            MozaikLinks paylinks = MozaikLinks(paylinksAddr);
-            address usdc = address(paylinks.USDC());
+        require(paylinksAddr.code.length > 0, "Paylinks has no code");
+        address usdc = address(MozaikLinks(paylinksAddr).USDC());
+        require(usdc != address(0), "Paylinks USDC not set");
+        require(usdc.code.length > 0, "Paylinks USDC has no code");
 
-            require(paylinksAddr.code.length > 0, "Paylinks has no code");
-            require(usdc != address(0), "Paylinks USDC not set");
-            require(usdc.code.length > 0, "Paylinks USDC has no code");
-
-            console.log("--- Paylinks ---");
-            console.log("Paylinks:       ", paylinksAddr);
-            console.log("USDC:           ", usdc);
-        }
+        console.log("--- Paylinks ---");
+        console.log("Paylinks:       ", paylinksAddr);
+        console.log("USDC:           ", usdc);
 
         console.log("--- All checks passed ---");
     }
