@@ -44,7 +44,7 @@ contract RecoveryFlowTest is BaseTest {
     function test_RotateSpendingSigner_RecoveryUserOp() public {
         (address newDeviceKey,) = makeAddrAndKey("newDeviceKey");
 
-        bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (newDeviceKey));
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.rotateSpendingSigner, (newDeviceKey)));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
 
         op = _signRecoveryUserOp(op, recoverySignerKey);
@@ -52,8 +52,7 @@ contract RecoveryFlowTest is BaseTest {
         vm.prank(ENTRY_POINT_V09);
         account.validateUserOp(op, _userOpHash(op), 0);
 
-        vm.prank(ENTRY_POINT_V09);
-        account.rotateSpendingSigner(newDeviceKey);
+        _execUserOp(account, op);
 
         usdc.mint(address(account), 100e6);
 
@@ -103,7 +102,7 @@ contract RecoveryFlowTest is BaseTest {
 
     function test_RotateSpendingSigner_InvalidRotate() public {
         address newDeviceKey = makeAddr("newDeviceKey");
-        bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (newDeviceKey));
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.rotateSpendingSigner, (newDeviceKey)));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signSpendingUserOp(op, spendingSignerKey);
 
@@ -117,8 +116,9 @@ contract RecoveryFlowTest is BaseTest {
     function test_Execute_RecoveryCannotExecute() public {
         usdc.mint(address(account), 100e6);
         bytes memory innerCall = abi.encodeCall(usdc.transfer, (attacker, 100e6));
-        PackedUserOperation memory op =
-            _buildUserOp(address(account), abi.encodeCall(account.execute, (address(usdc), 0, innerCall)));
+        PackedUserOperation memory op = _buildUserOp(
+            address(account), _wrapExecuteUserOp(abi.encodeCall(account.execute, (address(usdc), 0, innerCall)))
+        );
         op = _signRecoveryUserOp(op, recoverySignerKey);
 
         vm.prank(ENTRY_POINT_V09);

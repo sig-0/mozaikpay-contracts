@@ -41,17 +41,17 @@ contract MozaikAccountTest is BaseTest {
     function test_Account_ValidUserOpExecute() public {
         usdc.mint(address(account), 1000e6);
 
-        bytes memory callData =
-            abi.encodeCall(account.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (attacker, 100e6))));
+        bytes memory callData = _wrapExecuteUserOp(
+            abi.encodeCall(account.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (attacker, 100e6))))
+        );
 
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signSpendingUserOp(op, spendingSignerKey);
 
         vm.prank(ENTRY_POINT_V09);
-        account.validateUserOp(op, _userOpHash(op), 0);
+        assertEq(account.validateUserOp(op, _userOpHash(op), 0), SIG_VALIDATION_SUCCESS);
 
-        vm.prank(ENTRY_POINT_V09);
-        account.execute(address(usdc), 0, abi.encodeCall(usdc.transfer, (attacker, 100e6)));
+        _execUserOp(account, op);
 
         assertEq(usdc.balanceOf(attacker), 100e6);
     }
@@ -59,8 +59,8 @@ contract MozaikAccountTest is BaseTest {
     function test_Account_EntryPointCanCallExecute() public {
         usdc.mint(address(account), 1000e6);
 
-        // EntryPoint is trusted by _requireForExecute. In practice it only calls execute
-        // after validateUserOp returned SIG_VALIDATION_SUCCESS with a spending-key op.
+        // The execute() guard still trusts the EntryPoint for compatibility. Validated UserOps now
+        // run through executeUserOp; this exercises the retained direct path.
         vm.prank(ENTRY_POINT_V09);
         account.execute(address(usdc), 0, abi.encodeCall(usdc.transfer, (attacker, 100e6)));
 
@@ -86,7 +86,7 @@ contract MozaikAccountTest is BaseTest {
     }
 
     function test_ValidateUserOp_ValidSpendingKey() public {
-        bytes memory callData = abi.encodeCall(account.execute, (address(usdc), 0, ""));
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.execute, (address(usdc), 0, "")));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signSpendingUserOp(op, spendingSignerKey);
 
@@ -97,7 +97,7 @@ contract MozaikAccountTest is BaseTest {
     }
 
     function test_ValidateUserOp_ValidRecoveryKey() public {
-        bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (makeAddr("newKey")));
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.rotateSpendingSigner, (makeAddr("newKey"))));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signRecoveryUserOp(op, recoverySignerKey);
 
@@ -109,7 +109,8 @@ contract MozaikAccountTest is BaseTest {
 
     function test_ValidateUserOp_InvalidKey() public {
         (, uint256 wrongKey) = makeAddrAndKey("wrong");
-        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.execute, (address(usdc), 0, "")));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signSpendingUserOp(op, wrongKey);
 
         vm.prank(ENTRY_POINT_V09);
@@ -169,22 +170,21 @@ contract MozaikAccountTest is BaseTest {
 
     function test_RotateSpendingSigner_ValidRotation() public {
         address newSpendingSigner = makeAddr("newSpendingSigner");
-        bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (newSpendingSigner));
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.rotateSpendingSigner, (newSpendingSigner)));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signRecoveryUserOp(op, recoverySignerKey);
 
         vm.prank(ENTRY_POINT_V09);
         account.validateUserOp(op, _userOpHash(op), 0);
 
-        vm.prank(ENTRY_POINT_V09);
-        account.rotateSpendingSigner(newSpendingSigner);
+        _execUserOp(account, op);
 
         assertEq(account.spendingSigner(), newSpendingSigner);
     }
 
     function test_ValidateUserOp_SpendingKeyCannotSignRotate() public {
         address newSpendingSigner = makeAddr("newSpendingSigner");
-        bytes memory callData = abi.encodeCall(account.rotateSpendingSigner, (newSpendingSigner));
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.rotateSpendingSigner, (newSpendingSigner)));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signSpendingUserOp(op, spendingSignerKey);
 
@@ -196,7 +196,7 @@ contract MozaikAccountTest is BaseTest {
     }
 
     function test_ValidateUserOp_RecoveryKeyCannotSignExecute() public {
-        bytes memory callData = abi.encodeCall(account.execute, (address(usdc), 0, ""));
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.execute, (address(usdc), 0, "")));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signRecoveryUserOp(op, recoverySignerKey);
 
@@ -208,8 +208,9 @@ contract MozaikAccountTest is BaseTest {
     }
 
     function test_ValidateUserOp_SpendingKeyExecuteBatch() public {
-        PackedUserOperation memory op =
-            _buildUserOp(address(account), abi.encodeCall(account.executeBatch, (new BaseAccount.Call[](0))));
+        PackedUserOperation memory op = _buildUserOp(
+            address(account), _wrapExecuteUserOp(abi.encodeCall(account.executeBatch, (new BaseAccount.Call[](0))))
+        );
         op = _signSpendingUserOp(op, spendingSignerKey);
 
         vm.prank(ENTRY_POINT_V09);
@@ -219,7 +220,8 @@ contract MozaikAccountTest is BaseTest {
     }
 
     function test_ValidateUserOp_RecoveryKeyRotateRecovery() public {
-        bytes memory callData = abi.encodeCall(account.rotateRecoverySigner, (makeAddr("newRecovery")));
+        bytes memory callData =
+            _wrapExecuteUserOp(abi.encodeCall(account.rotateRecoverySigner, (makeAddr("newRecovery"))));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signRecoveryUserOp(op, recoverySignerKey);
 
@@ -230,7 +232,7 @@ contract MozaikAccountTest is BaseTest {
     }
 
     function test_ValidateUserOp_RecoveryKeyUpgrade() public {
-        bytes memory callData = abi.encodeCall(account.upgradeToAndCall, (address(0), ""));
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.upgradeToAndCall, (address(0), "")));
         PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signRecoveryUserOp(op, recoverySignerKey);
 
@@ -242,6 +244,19 @@ contract MozaikAccountTest is BaseTest {
 
     function test_ValidateUserOp_EmptyCallDataRejected() public {
         PackedUserOperation memory op = _buildUserOp(address(account), "");
+        op = _signSpendingUserOp(op, spendingSignerKey);
+
+        vm.prank(ENTRY_POINT_V09);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        assertEq(result, SIG_VALIDATION_FAILED);
+    }
+
+    function test_ValidateUserOp_UnwrappedCallDataRejected() public {
+        // A correctly-signed spending op whose top-level selector is execute (not executeUserOp) is
+        // rejected: every UserOp must be wrapped so execution routes through executeUserOp.
+        bytes memory callData = abi.encodeCall(account.execute, (address(usdc), 0, ""));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
         op = _signSpendingUserOp(op, spendingSignerKey);
 
         vm.prank(ENTRY_POINT_V09);

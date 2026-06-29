@@ -121,8 +121,8 @@ contract UserOpFlowTest is BaseTest {
             address(forkFactory), abi.encodeCall(forkFactory.createAccount, (spendingSigner, recoverySigner))
         );
 
-        bytes memory callData = abi.encodeCall(
-            BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (beneficiary, 100e6)))
+        bytes memory callData = _wrapExecuteUserOp(
+            abi.encodeCall(BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (beneficiary, 100e6))))
         );
 
         uint256 nonce = forkEp.getNonce(expectedAddr, 0);
@@ -151,8 +151,9 @@ contract UserOpFlowTest is BaseTest {
         vm.deal(address(acct), 1 ether);
         usdc.mint(address(acct), 500e6);
 
-        bytes memory callData =
-            abi.encodeCall(BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (beneficiary, 50e6))));
+        bytes memory callData = _wrapExecuteUserOp(
+            abi.encodeCall(BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (beneficiary, 50e6))))
+        );
 
         uint256 nonce = forkEp.getNonce(address(acct), 0);
         PackedUserOperation memory op = _buildForkOp(address(acct), callData, "", nonce);
@@ -232,8 +233,10 @@ contract UserOpFlowTest is BaseTest {
         usdc.mint(address(acct), 1000e6);
 
         for (uint256 i = 0; i < 2; i++) {
-            bytes memory callData = abi.encodeCall(
-                BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (beneficiary, 10e6)))
+            bytes memory callData = _wrapExecuteUserOp(
+                abi.encodeCall(
+                    BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (beneficiary, 10e6)))
+                )
             );
 
             uint256 nonce = forkEp.getNonce(address(acct), 0);
@@ -257,7 +260,7 @@ contract UserOpFlowTest is BaseTest {
         MozaikAccount acct = forkFactory.createAccount(spendingSigner, recoverySigner);
 
         (address newSpendingKey,) = makeAddrAndKey("newSpendingKey");
-        bytes memory callData = abi.encodeCall(acct.rotateSpendingSigner, (newSpendingKey));
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(acct.rotateSpendingSigner, (newSpendingKey)));
 
         uint256 nonce = forkEp.getNonce(address(acct), 0);
         PackedUserOperation memory op = _buildForkOp(address(acct), callData, "", nonce);
@@ -293,7 +296,7 @@ contract UserOpFlowTest is BaseTest {
         MozaikAccount acct = forkFactory.createAccount(spendingSigner, recoverySigner);
 
         MockMozaikAccountV2 newImpl = new MockMozaikAccountV2();
-        bytes memory callData = abi.encodeCall(acct.upgradeToAndCall, (address(newImpl), ""));
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(acct.upgradeToAndCall, (address(newImpl), "")));
 
         uint256 nonce = forkEp.getNonce(address(acct), 0);
         PackedUserOperation memory op = _buildForkOp(address(acct), callData, "", nonce);

@@ -109,6 +109,17 @@ abstract contract BaseTest is Test {
         return op;
     }
 
+    /// @notice Wrap inner account callData in the executeUserOp selector (the form the account requires).
+    function _wrapExecuteUserOp(bytes memory inner) internal pure returns (bytes memory) {
+        return bytes.concat(MozaikAccount.executeUserOp.selector, inner);
+    }
+
+    /// @notice Run a UserOp through executeUserOp as the EntryPoint does after validation.
+    function _execUserOp(MozaikAccount acct, PackedUserOperation memory op) internal {
+        vm.prank(ENTRY_POINT_V09);
+        acct.executeUserOp(op, _userOpHash(op));
+    }
+
     function _userOpHash(PackedUserOperation memory op) internal view returns (bytes32) {
         bytes32 structHash = keccak256(
             abi.encode(

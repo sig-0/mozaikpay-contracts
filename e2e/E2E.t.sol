@@ -56,6 +56,11 @@ contract E2ETest is Test {
 
     // Helpers
 
+    /// @dev Wrap inner account callData in the executeUserOp selector (the form the account requires).
+    function _wrapExecuteUserOp(bytes memory inner) internal pure returns (bytes memory) {
+        return bytes.concat(MozaikAccount.executeUserOp.selector, inner);
+    }
+
     function _buildUserOp(address sender, bytes memory callData, bytes memory initCode, uint256 nonce)
     internal
     pure
@@ -238,8 +243,8 @@ contract E2ETest is Test {
             address(factory), abi.encodeCall(factory.createAccount, (spendingSigner, recoverySigner))
         );
 
-        // callData must target execute (spending-key selector requirement)
-        bytes memory callData = abi.encodeCall(BaseAccount.execute, (expectedAddr, 0, ""));
+        // callData must wrap execute in executeUserOp (spending-key selector requirement)
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(BaseAccount.execute, (expectedAddr, 0, "")));
 
         uint256 nonce = ep.getNonce(expectedAddr, 0);
         PackedUserOperation memory op = _buildUserOp(expectedAddr, callData, initCode, nonce);
@@ -256,8 +261,8 @@ contract E2ETest is Test {
         usdc.mint(expectedAddr, 1000e6);
         address recipient = makeAddr("recipient");
 
-        callData = abi.encodeCall(
-            BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (recipient, 100e6)))
+        callData = _wrapExecuteUserOp(
+            abi.encodeCall(BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (recipient, 100e6))))
         );
 
         nonce = ep.getNonce(expectedAddr, 0);
@@ -277,9 +282,10 @@ contract E2ETest is Test {
         uint64 linkExpiry = uint64(block.timestamp + 1 days);
 
         // Approve MozaikLinks to pull USDC from the smart account (sponsored UserOp).
-        callData = abi.encodeCall(
-            BaseAccount.execute,
-            (address(usdc), 0, abi.encodeCall(usdc.approve, (address(links), type(uint256).max)))
+        callData = _wrapExecuteUserOp(
+            abi.encodeCall(
+                BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.approve, (address(links), type(uint256).max)))
+            )
         );
         nonce = ep.getNonce(expectedAddr, 0);
         op = _buildUserOp(expectedAddr, callData, "", nonce);
@@ -287,9 +293,10 @@ contract E2ETest is Test {
         _handleSingleOp(op);
 
         // Create the paylink (sponsored UserOp). Account loses linkAmount USDC into escrow.
-        callData = abi.encodeCall(
-            BaseAccount.execute,
-            (address(links), 0, abi.encodeCall(links.create, (linkPubKey, linkAmount, linkExpiry)))
+        callData = _wrapExecuteUserOp(
+            abi.encodeCall(
+                BaseAccount.execute, (address(links), 0, abi.encodeCall(links.create, (linkPubKey, linkAmount, linkExpiry)))
+            )
         );
         nonce = ep.getNonce(expectedAddr, 0);
         op = _buildUserOp(expectedAddr, callData, "", nonce);
@@ -328,7 +335,7 @@ contract E2ETest is Test {
         // Step 5: Rotate Spending Signer
         (address newSpendingSigner, uint256 newSpendingKey) = makeAddrAndKey("newSpendingSigner");
 
-        callData = abi.encodeCall(account.rotateSpendingSigner, (newSpendingSigner));
+        callData = _wrapExecuteUserOp(abi.encodeCall(account.rotateSpendingSigner, (newSpendingSigner)));
 
         nonce = ep.getNonce(expectedAddr, 0);
         op = _buildUserOp(expectedAddr, callData, "", nonce);
@@ -338,8 +345,8 @@ contract E2ETest is Test {
         assertEq(account.spendingSigner(), newSpendingSigner, "spending signer not rotated");
 
         // Verify new key can execute
-        callData = abi.encodeCall(
-            BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (recipient, 50e6)))
+        callData = _wrapExecuteUserOp(
+            abi.encodeCall(BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (recipient, 50e6))))
         );
 
         nonce = ep.getNonce(expectedAddr, 0);
@@ -355,7 +362,7 @@ contract E2ETest is Test {
         // Step 6: Rotate Recovery Signer
         (address newRecoverySigner, uint256 newRecoveryKey) = makeAddrAndKey("newRecoverySigner");
 
-        callData = abi.encodeCall(account.rotateRecoverySigner, (newRecoverySigner));
+        callData = _wrapExecuteUserOp(abi.encodeCall(account.rotateRecoverySigner, (newRecoverySigner)));
 
         nonce = ep.getNonce(expectedAddr, 0);
         op = _buildUserOp(expectedAddr, callData, "", nonce);
@@ -370,7 +377,7 @@ contract E2ETest is Test {
         // Step 7: Upgrade Implementation
         MockMozaikAccountV2 v2Impl = new MockMozaikAccountV2();
 
-        callData = abi.encodeCall(account.upgradeToAndCall, (address(v2Impl), ""));
+        callData = _wrapExecuteUserOp(abi.encodeCall(account.upgradeToAndCall, (address(v2Impl), "")));
 
         nonce = ep.getNonce(expectedAddr, 0);
         op = _buildUserOp(expectedAddr, callData, "", nonce);
@@ -396,7 +403,7 @@ contract E2ETest is Test {
         initCode = abi.encodePacked(
             address(newFactory), abi.encodeCall(newFactory.createAccount, (signer2Spending, signer2Recovery))
         );
-        callData = abi.encodeCall(BaseAccount.execute, (newAccountAddr, 0, ""));
+        callData = _wrapExecuteUserOp(abi.encodeCall(BaseAccount.execute, (newAccountAddr, 0, "")));
 
         nonce = ep.getNonce(newAccountAddr, 0);
         op = _buildUserOp(newAccountAddr, callData, initCode, nonce);
@@ -407,7 +414,7 @@ contract E2ETest is Test {
         assertEq(MozaikAccount(payable(newAccountAddr)).spendingSigner(), signer2Spending);
 
         // Upgrade original account to the new factory's implementation
-        callData = abi.encodeCall(account.upgradeToAndCall, (address(newImpl), ""));
+        callData = _wrapExecuteUserOp(abi.encodeCall(account.upgradeToAndCall, (address(newImpl), "")));
 
         nonce = ep.getNonce(expectedAddr, 0);
         op = _buildUserOp(expectedAddr, callData, "", nonce);

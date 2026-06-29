@@ -11,22 +11,22 @@ import {_packValidationData} from "account-abstraction/core/Helpers.sol";
 /**
  * @title MozaikVerifyingPaymaster
  * @notice ERC-4337 paymaster that sponsors gas for MozaikPay users based on a short-lived
- *         off-chain signature from the MozaikPay backend.
- * @dev The backend (sponsor key) enforces MozaikPay's own sponsorship policy off-chain and
- *      issues a per-operation approval valid for a fixed time window. The paymaster verifies
- *      that approval on-chain before agreeing to pay for gas.
+ *         off-chain signature from the sponsor.
+ * @dev The sponsor enforces MozaikPay's sponsorship policy off-chain and issues a per-operation
+ *      approval valid for a fixed time window. The paymaster verifies that approval on-chain before
+ *      agreeing to pay for gas.
  *
  *      The approval digest binds to: this contract's address, chainId, the sender account,
  *      the account nonce, the exact callData, the gas limits, and the time window. This
  *      prevents replay, cross-chain reuse, gas inflation by a bundler, and sponsorship of
- *      operations the backend did not explicitly approve.
+ *      operations the sponsor did not explicitly approve.
  *
  *      Ownership (for sponsor rotation and ETH withdrawals) is inherited via BasePaymaster.
  */
 contract MozaikVerifyingPaymaster is BasePaymaster {
     /**
      * @notice The hot-wallet address whose ECDSA signature authorises gas sponsorship.
-     * @dev Rotatable by the owner via setSponsor. The backend signs with the corresponding
+     * @dev Rotatable by the owner via setSponsor. The sponsor signs with the corresponding
      *      private key and embeds the signature in paymasterAndData.
      */
     address public sponsor;
@@ -49,7 +49,7 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
     error ZeroAddress();
 
     /**
-     * @param _sponsor The initial backend signing address.
+     * @param _sponsor The initial sponsor signing address.
      * @dev The EntryPoint is fixed to the canonical v0.9 deployment, not configurable, so it
      *      cannot diverge from the account and factory EntryPoint.
      */
@@ -60,7 +60,7 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
     }
 
     /**
-     * @notice Replaces the sponsor address. Used to rotate the backend signing key.
+     * @notice Replaces the sponsor address. Used to rotate the sponsor signing key.
      * @param newSponsor The new sponsor address.
      */
     function setSponsor(address newSponsor) external onlyOwner {
@@ -72,13 +72,13 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
     }
 
     /**
-     * @dev Validates the backend's sponsorship approval embedded in paymasterAndData.
+     * @dev Validates the sponsor's approval embedded in paymasterAndData.
      *
      *      paymasterAndData layout (after the standard 52-byte EntryPoint header):
      *        validUntil (6 bytes) || validAfter (6 bytes) || sig (65 bytes) || uint16(65) || MAGIC (8 bytes)
      *
      *      userOpHash and maxCost are intentionally ignored: the digest is constructed
-     *      over only the fields the backend commits to (see _paymasterDigest), and
+     *      over only the fields the sponsor commits to (see _paymasterDigest), and
      *      MozaikPay sponsors unconditionally with no per-op cost cap.
      *
      *      Never reverts - a bad signature returns sigFailed=true which the EntryPoint
@@ -111,7 +111,7 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
     }
 
     /**
-     * @dev Constructs the digest the backend must sign to approve sponsorship of a UserOp.
+     * @dev Constructs the digest the sponsor must sign to approve sponsorship of a UserOp.
      *
      *      Binds to:
      *        - address(this)              -  prevents use on a different paymaster
