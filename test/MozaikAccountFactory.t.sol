@@ -83,6 +83,12 @@ contract MozaikAccountFactoryTest is BaseTest {
         factory.createAccount(spendingSigner, address(0));
     }
 
+    function test_CreateAccount_RejectsDuplicateSigners() public {
+        vm.prank(senderCreator);
+        vm.expectRevert(MozaikAccountFactory.DuplicateSigners.selector);
+        factory.createAccount(spendingSigner, spendingSigner);
+    }
+
     function test_CreateAccount_EmitsEvent() public {
         address expected = factory.computeAddress(spendingSigner, recoverySigner);
 

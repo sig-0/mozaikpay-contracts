@@ -25,6 +25,10 @@ import {SIG_VALIDATION_FAILED, SIG_VALIDATION_SUCCESS} from "account-abstraction
  *      userOp.callData before ECDSA recovery. A spending-key UserOp whose callData does not
  *      target execute/executeBatch is rejected; a recovery-key UserOp whose callData does not
  *      target a rotation/upgrade function is rejected.
+ *
+ *      The two signers must always be distinct addresses. Equality is rejected at
+ *      initialization and on either rotation, so the two-key separation cannot collapse
+ *      into a single key that holds both spend and upgrade authority.
  */
 contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
     /**
@@ -82,6 +86,16 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
      */
     error ZeroAddress();
 
+    /**
+     * @notice Thrown when the spending and recovery signers would be set to the same address.
+     */
+    error DuplicateSigners();
+
+    /**
+     * @notice Thrown when a rotation would set a signer to its current value.
+     */
+    error SignerUnchanged();
+
     receive() external payable {}
 
     /**
@@ -113,6 +127,7 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
      */
     function initialize(address spender, address recovery) external initializer {
         if (spender == address(0) || recovery == address(0)) revert ZeroAddress();
+        if (spender == recovery) revert DuplicateSigners();
 
         MozaikAccountStorage storage $ = _getMozaikAccountStorage();
         $.spendingSigner = spender;
@@ -136,6 +151,9 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
         if (newSpendingSigner == address(0)) revert ZeroAddress();
 
         MozaikAccountStorage storage $ = _getMozaikAccountStorage();
+        if (newSpendingSigner == $.recoverySigner) revert DuplicateSigners();
+        if (newSpendingSigner == $.spendingSigner) revert SignerUnchanged();
+
         address previousSigner = $.spendingSigner;
         $.spendingSigner = newSpendingSigner;
 
@@ -152,6 +170,9 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable {
         if (newRecoverySigner == address(0)) revert ZeroAddress();
 
         MozaikAccountStorage storage $ = _getMozaikAccountStorage();
+        if (newRecoverySigner == $.spendingSigner) revert DuplicateSigners();
+        if (newRecoverySigner == $.recoverySigner) revert SignerUnchanged();
+
         address previousSigner = $.recoverySigner;
         $.recoverySigner = newRecoverySigner;
 

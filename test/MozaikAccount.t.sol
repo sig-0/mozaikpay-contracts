@@ -265,6 +265,30 @@ contract MozaikAccountTest is BaseTest {
         account.rotateRecoverySigner(makeAddr("new"));
     }
 
+    function test_RotateSpendingSigner_RejectsRecoveryAddress() public {
+        vm.prank(recoverySigner);
+        vm.expectRevert(MozaikAccount.DuplicateSigners.selector);
+        account.rotateSpendingSigner(recoverySigner);
+    }
+
+    function test_RotateRecoverySigner_RejectsSpendingAddress() public {
+        vm.prank(recoverySigner);
+        vm.expectRevert(MozaikAccount.DuplicateSigners.selector);
+        account.rotateRecoverySigner(spendingSigner);
+    }
+
+    function test_RotateSpendingSigner_RejectsUnchanged() public {
+        vm.prank(recoverySigner);
+        vm.expectRevert(MozaikAccount.SignerUnchanged.selector);
+        account.rotateSpendingSigner(spendingSigner);
+    }
+
+    function test_RotateRecoverySigner_RejectsUnchanged() public {
+        vm.prank(recoverySigner);
+        vm.expectRevert(MozaikAccount.SignerUnchanged.selector);
+        account.rotateRecoverySigner(recoverySigner);
+    }
+
     function test_StorageLayout_ERC7201() public view {
         bytes32 slot = keccak256(abi.encode(uint256(keccak256("mozaik.MozaikAccount")) - 1)) & ~bytes32(uint256(0xff));
 

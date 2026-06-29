@@ -45,6 +45,11 @@ contract MozaikAccountFactory {
     error ZeroAddress();
 
     /**
+     * @notice Thrown when the spending and recovery signers are the same address.
+     */
+    error DuplicateSigners();
+
+    /**
      * @param _entryPoint The ERC-4337 EntryPoint. Used to resolve the SenderCreator address.
      */
     constructor(IEntryPoint _entryPoint) {
@@ -67,6 +72,7 @@ contract MozaikAccountFactory {
         if (msg.sender != address(SENDER_CREATOR)) revert NotSenderCreator(msg.sender);
 
         if (spendingSigner == address(0) || recoverySigner == address(0)) revert ZeroAddress();
+        if (spendingSigner == recoverySigner) revert DuplicateSigners();
 
         address addr = computeAddress(spendingSigner, recoverySigner);
 
