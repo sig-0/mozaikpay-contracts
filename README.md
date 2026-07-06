@@ -7,7 +7,9 @@ This document covers deploying the MozaikPay smart contracts to Base Sepolia (te
 - [Foundry](https://book.getfoundry.sh/getting-started/installation) installed (`forge`, `cast`)
 - A deployer wallet with ETH on the target chain (for gas)
 - A sponsor wallet (hot wallet) whose private key the API will use to sign paymaster approvals
-- An Infura (or other) RPC endpoint for the target chain
+- An RPC endpoint for the target chain. The Makefile defaults to the public Base endpoints
+  (`https://sepolia.base.org`, `https://mainnet.base.org`); set `BASE_SEPOLIA_RPC` /
+  `BASE_MAINNET_RPC` to use your own (recommended for mainnet)
 
 ## Chain Reference
 
@@ -31,7 +33,7 @@ Four contracts are deployed per environment:
 2. **MozaikVerifyingPaymaster** -- Sponsors gas for UserOperations. Constructor takes the sponsor wallet address; the
    canonical EntryPoint v0.9 is hardcoded.
 3. **MozaikAccount** (implementation) -- Deployed automatically by the factory constructor. Not called directly.
-4. **MozaikLinks** -- Non-upgradeable USDC escrow for payment links. Deployed by `01_Deploy.s.sol` alongside the account/paymaster stack, bound to the chain's USDC.
+4. **MozaikPaylinks** -- Non-upgradeable USDC escrow for payment links. Deployed by `01_Deploy.s.sol` alongside the account/paymaster stack, bound to the chain's USDC.
    Constructor takes the USDC token address; immutable thereafter. Lifecycle: `create` (sender locks USDC under an
    ephemeral `claimSigner`), `claim` (recipient redeems with an EIP-712 signature over the claim payload), `reclaim`
    (sender returns funds; sender-only pre-expiry, permissionless at or after expiry).
@@ -74,7 +76,7 @@ PAYLINKS_ADDRESS=0x<deployed_paylinks_address>
 | `DEPOSIT_AMOUNT_WEI` | `02_FundPaymaster`                                         | ETH to deposit into the EntryPoint on behalf of the paymaster, in wei                                                                     |
 | `NEW_OWNER_ADDRESS`  | `03_TransferOwnership`                                     | Address to transfer paymaster ownership to (optional)                                                                                     |
 | `FACTORY_ADDRESS`    | `VerifyDeploy`                                             | Address of the deployed factory contract (output of step 1)                                                                               |
-| `PAYLINKS_ADDRESS`   | `VerifyDeploy`                                             | Address of the deployed MozaikLinks contract (output of step 1)                                                                           |
+| `PAYLINKS_ADDRESS`   | `VerifyDeploy`                                             | Address of the deployed MozaikPaylinks contract (output of step 1)                                                                           |
 | `USDC_ADDRESS`       | `01_Deploy` (optional)                                     | Overrides the paylinks USDC token. Defaults to the canonical USDC for the target chain (see chain reference table)                        |
 
 ## Step-by-Step Deployment
@@ -83,7 +85,7 @@ All commands below use Base Sepolia. For mainnet, replace `sepolia` with `mainne
 
 ### Step 1: Deploy Factory + Paymaster + Paylinks
 
-The paylinks escrow (`MozaikLinks`) is deployed in the same step, bound to the chain's
+The paylinks escrow (`MozaikPaylinks`) is deployed in the same step, bound to the chain's
 canonical USDC. Export `USDC_ADDRESS` first only if you need to override that token.
 
 ```bash
@@ -100,8 +102,9 @@ make deploy-sepolia EXTRA="--broadcast --account deployer"
 The script logs the deployed addresses:
 
 ```
-Factory:      0x...
+EntryPoint:   0x...
 AccountImpl:  0x...
+Factory:      0x...
 Paymaster:    0x...
 Sponsor:      0x...
 Owner:        0x...
@@ -148,9 +151,9 @@ This reads on-chain state and confirms:
 - Paymaster has code
 - Sponsor and owner are non-zero
 - EntryPoint deposit exists
-- MozaikLinks has code and its bound USDC has code
+- MozaikPaylinks has code and its bound USDC has code
 
-### Step 5 (Optional): Transfer Paymaster Ownership
+### Step 4 (Optional): Transfer Paymaster Ownership
 
 If you want a different address (e.g., a multisig) to own the paymaster:
 
@@ -171,7 +174,7 @@ After deployment, record these values for the API and mobile configuration:
 |---------------------|------------------------------------------------------------------|---------------------------------------|
 | Factory address     | API (`MOZAIK_ACCOUNT_FACTORY`)                                   | `0xABC...`                            |
 | Paymaster address   | API (`MOZAIK_PAYMASTER_ADDRESS`)                                 | `0xDEF...`                            |
-| MozaikLinks address | API (`MOZAIK_PAYLINKS_ADDR`)                                     | `0x123...`                            |
+| MozaikPaylinks address | API (`MOZAIK_PAYLINKS_ADDR`)                                     | `0x123...`                            |
 | Sponsor private key | API (`MOZAIK_PAYMASTER_SPONSOR_KEY`)                             | 64-char hex, no `0x` prefix           |
 | USDC address        | API (`MOZAIK_USDC_ADDRESS`), Mobile (`EXPO_PUBLIC_USDC_ADDRESS`) | See chain reference table above       |
 | Chain ID            | API (`MOZAIK_CHAIN_ID`)                                          | `84532` (Sepolia) or `8453` (mainnet) |

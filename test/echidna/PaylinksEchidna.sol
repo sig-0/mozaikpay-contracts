@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {MozaikLinks} from "../../src/paylinks/MozaikLinks.sol";
+import {MozaikPaylinks} from "../../src/paylinks/MozaikPaylinks.sol";
 
 /// @notice Minimal ERC20 with a public mint, for Echidna runs.
 contract MintableERC20 is ERC20 {
@@ -15,7 +15,7 @@ contract MintableERC20 is ERC20 {
     }
 }
 
-/// @notice Echidna fuzz target for MozaikLinks.
+/// @notice Echidna fuzz target for MozaikPaylinks.
 /// @dev Echidna can't generate valid ECDSA signatures, so this target focuses on the
 ///      non-cryptographic state machine: createLink, reclaim (sender-only pre-expiry,
 ///      permissionless post-expiry), direct dust transfers, and the invariants the
@@ -25,7 +25,7 @@ contract MintableERC20 is ERC20 {
 ///      a ghost `activeTotal` that increments on successful create and decrements on
 ///      successful reclaim; the property compares against the contract's USDC balance.
 contract PaylinksEchidna {
-    MozaikLinks public links;
+    MozaikPaylinks public links;
     MintableERC20 public usdc;
 
     uint256 public activeTotal;
@@ -36,13 +36,13 @@ contract PaylinksEchidna {
 
     address[] internal _signers;
     mapping(address => bool) internal _seen;
-    mapping(address => MozaikLinks.Status) internal _lastStatus;
+    mapping(address => MozaikPaylinks.Status) internal _lastStatus;
 
     address internal constant SENDER = address(0xA11CE);
 
     constructor() {
         usdc = new MintableERC20();
-        links = new MozaikLinks(IERC20(address(usdc)));
+        links = new MozaikPaylinks(IERC20(address(usdc)));
     }
 
     function tryCreate(uint96 pubKeySeed, uint96 amount, uint64 expiryOffset) external {
@@ -81,8 +81,8 @@ contract PaylinksEchidna {
         if (_signers.length == 0) return;
         address claimSigner = _signers[idIndex % _signers.length];
 
-        MozaikLinks.Link memory link = links.getLink(claimSigner);
-        if (link.status != MozaikLinks.Status.Active) return;
+        MozaikPaylinks.Link memory link = links.getLink(claimSigner);
+        if (link.status != MozaikPaylinks.Status.Active) return;
 
         try EchidnaSenderShim(senderShim()).reclaim(claimSigner) {
             activeTotal -= link.amount;
@@ -98,8 +98,8 @@ contract PaylinksEchidna {
         if (_signers.length == 0) return;
         address claimSigner = _signers[idIndex % _signers.length];
 
-        MozaikLinks.Link memory link = links.getLink(claimSigner);
-        if (link.status != MozaikLinks.Status.Active) return;
+        MozaikPaylinks.Link memory link = links.getLink(claimSigner);
+        if (link.status != MozaikPaylinks.Status.Active) return;
         if (block.timestamp < link.expiresAt) return;
 
         try links.reclaim(claimSigner) {
@@ -151,8 +151,8 @@ contract PaylinksEchidna {
     }
 
     function _trackStatus(address claimSigner) internal {
-        MozaikLinks.Status current = links.getLink(claimSigner).status;
-        MozaikLinks.Status prev = _lastStatus[claimSigner];
+        MozaikPaylinks.Status current = links.getLink(claimSigner).status;
+        MozaikPaylinks.Status prev = _lastStatus[claimSigner];
 
         if (uint256(current) < uint256(prev)) statusEverWentBackwards = true;
 
@@ -162,10 +162,10 @@ contract PaylinksEchidna {
 
 /// @dev Standalone "sender" contract so reclaim (msg.sender == link.sender) and create work without cheatcodes.
 contract EchidnaSenderShim {
-    MozaikLinks public links;
+    MozaikPaylinks public links;
     MintableERC20 public usdc;
 
-    constructor(MozaikLinks _links, MintableERC20 _usdc) {
+    constructor(MozaikPaylinks _links, MintableERC20 _usdc) {
         links = _links;
         usdc = _usdc;
 

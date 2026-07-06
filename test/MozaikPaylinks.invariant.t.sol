@@ -5,9 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {MozaikLinks} from "../src/paylinks/MozaikLinks.sol";
+import {MozaikPaylinks} from "../src/paylinks/MozaikPaylinks.sol";
 
-/// @notice Invariant handler that drives the MozaikLinks state machine via random calls.
+/// @notice Invariant handler that drives the MozaikPaylinks state machine via random calls.
 /// @dev Tracks ghost state for each created link so the invariant test can sum active
 /// amounts and verify they don't exceed the escrow's USDC balance.
 contract LinksHandler is Test {
@@ -15,7 +15,7 @@ contract LinksHandler is Test {
     bytes32 internal constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
-    MozaikLinks public links;
+    MozaikPaylinks public links;
     ERC20Mock public usdc;
 
     address public sender;
@@ -29,9 +29,9 @@ contract LinksHandler is Test {
 
     // Ghost: track that no observable invariant has ever broken.
     bool public statusEverWentBackwards;
-    mapping(address => MozaikLinks.Status) internal _lastStatus;
+    mapping(address => MozaikPaylinks.Status) internal _lastStatus;
 
-    constructor(MozaikLinks _links, ERC20Mock _usdc, address _sender) {
+    constructor(MozaikPaylinks _links, ERC20Mock _usdc, address _sender) {
         links = _links;
         usdc = _usdc;
         sender = _sender;
@@ -62,7 +62,11 @@ contract LinksHandler is Test {
     function _domainSeparator() internal view returns (bytes32) {
         return keccak256(
             abi.encode(
-                DOMAIN_TYPEHASH, keccak256(bytes("MozaikLinks")), keccak256(bytes("1")), block.chainid, address(links)
+                DOMAIN_TYPEHASH,
+                keccak256(bytes("MozaikPaylinks")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(links)
             )
         );
     }
@@ -74,8 +78,8 @@ contract LinksHandler is Test {
     }
 
     function _checkMonotonic(address claimSigner) internal {
-        MozaikLinks.Status current = links.getLink(claimSigner).status;
-        MozaikLinks.Status prev = _lastStatus[claimSigner];
+        MozaikPaylinks.Status current = links.getLink(claimSigner).status;
+        MozaikPaylinks.Status prev = _lastStatus[claimSigner];
 
         // Allowed: None -> Active -> {Claimed, Revoked, Swept}. Anything else (e.g. Claimed -> Active) is illegal.
         if (uint256(current) < uint256(prev)) statusEverWentBackwards = true;
@@ -106,7 +110,7 @@ contract LinksHandler is Test {
         _expiresAt[pubKey] = exp;
         _privKey[pubKey] = keySeed;
         _isActive[pubKey] = true;
-        _lastStatus[pubKey] = MozaikLinks.Status.Active;
+        _lastStatus[pubKey] = MozaikPaylinks.Status.Active;
     }
 
     function claim(uint256 idIndex, address claimer) external {
@@ -169,15 +173,15 @@ contract LinksHandler is Test {
     }
 }
 
-contract MozaikLinksInvariantTest is Test {
+contract MozaikPaylinksInvariantTest is Test {
     LinksHandler internal handler;
-    MozaikLinks internal links;
+    MozaikPaylinks internal links;
     ERC20Mock internal usdc;
     address internal sender;
 
     function setUp() public {
         usdc = new ERC20Mock();
-        links = new MozaikLinks(IERC20(address(usdc)));
+        links = new MozaikPaylinks(IERC20(address(usdc)));
         sender = makeAddr("invariantSender");
 
         handler = new LinksHandler(links, usdc, sender);
@@ -213,8 +217,8 @@ contract MozaikLinksInvariantTest is Test {
     function invariant_NonZeroExpiryForCreated() public view {
         address[] memory s = handler.signers();
         for (uint256 i = 0; i < s.length; i++) {
-            MozaikLinks.Link memory link = links.getLink(s[i]);
-            if (link.status != MozaikLinks.Status.None) {
+            MozaikPaylinks.Link memory link = links.getLink(s[i]);
+            if (link.status != MozaikPaylinks.Status.None) {
                 assertGt(link.expiresAt, 0, "expiresAt must be non-zero for created links");
             }
         }

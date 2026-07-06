@@ -12,7 +12,7 @@ import {BaseAccount} from "account-abstraction/core/BaseAccount.sol";
 import {MozaikAccount} from "../src/account/MozaikAccount.sol";
 import {MozaikAccountFactory} from "../src/account/MozaikAccountFactory.sol";
 import {MozaikVerifyingPaymaster} from "../src/paymaster/MozaikVerifyingPaymaster.sol";
-import {MozaikLinks} from "../src/paylinks/MozaikLinks.sol";
+import {MozaikPaylinks} from "../src/paylinks/MozaikPaylinks.sol";
 
 /// @dev V2 mock used in upgrade tests. Adds a version() getter.
 contract MockMozaikAccountV2 is MozaikAccount {
@@ -275,13 +275,13 @@ contract E2ETest is Test {
 
         // Step 4: Paylinks: sponsored create + EOA claim
 
-        MozaikLinks links = new MozaikLinks(IERC20(address(usdc)));
+        MozaikPaylinks links = new MozaikPaylinks(IERC20(address(usdc)));
 
         (address linkPubKey, uint256 linkPrivKey) = makeAddrAndKey("paylinkEphemeralKey");
         uint256 linkAmount = 100e6;
         uint64 linkExpiry = uint64(block.timestamp + 1 days);
 
-        // Approve MozaikLinks to pull USDC from the smart account (sponsored UserOp).
+        // Approve MozaikPaylinks to pull USDC from the smart account (sponsored UserOp).
         callData = _wrapExecuteUserOp(
             abi.encodeCall(
                 BaseAccount.execute, (address(usdc), 0, abi.encodeCall(usdc.approve, (address(links), type(uint256).max)))
@@ -312,7 +312,7 @@ contract E2ETest is Test {
         bytes32 linksDomainSep = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256("MozaikLinks"),
+                keccak256("MozaikPaylinks"),
                 keccak256("1"),
                 block.chainid,
                 address(links)

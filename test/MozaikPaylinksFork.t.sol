@@ -4,13 +4,13 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {MozaikLinks} from "../src/paylinks/MozaikLinks.sol";
+import {MozaikPaylinks} from "../src/paylinks/MozaikPaylinks.sol";
 
-/// @notice Fork test against Base Sepolia. Deploys MozaikLinks against the real
+/// @notice Fork test against Base Sepolia. Deploys MozaikPaylinks against the real
 ///         Circle USDC proxy and runs the full create/claim/revoke/sweep flow.
 /// @dev    Skipped automatically when BASE_SEPOLIA_RPC is not set in the env.
 ///         Run with `make test-fork`.
-contract MozaikLinksForkTest is Test {
+contract MozaikPaylinksForkTest is Test {
     /// @dev Circle's USDC on Base Sepolia.
     /// https://developers.circle.com/stablecoins/usdc-contract-addresses
     address internal constant BASE_SEPOLIA_USDC = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
@@ -19,7 +19,7 @@ contract MozaikLinksForkTest is Test {
     bytes32 internal constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
-    MozaikLinks internal links;
+    MozaikPaylinks internal links;
     IERC20 internal usdc;
 
     address internal sender;
@@ -41,7 +41,7 @@ contract MozaikLinksForkTest is Test {
 
     function _setupFork() internal {
         usdc = IERC20(BASE_SEPOLIA_USDC);
-        links = new MozaikLinks(usdc);
+        links = new MozaikPaylinks(usdc);
 
         sender = makeAddr("forkSender");
         (recipient, recipientKey) = makeAddrAndKey("forkRecipient");
@@ -64,7 +64,11 @@ contract MozaikLinksForkTest is Test {
     function _domainSeparator() internal view returns (bytes32) {
         return keccak256(
             abi.encode(
-                DOMAIN_TYPEHASH, keccak256(bytes("MozaikLinks")), keccak256(bytes("1")), block.chainid, address(links)
+                DOMAIN_TYPEHASH,
+                keccak256(bytes("MozaikPaylinks")),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(links)
             )
         );
     }
@@ -96,8 +100,8 @@ contract MozaikLinksForkTest is Test {
         assertEq(usdc.balanceOf(recipient), recipientBefore + AMOUNT, "recipient not paid");
         assertEq(usdc.balanceOf(address(links)), 0, "escrow not drained");
 
-        MozaikLinks.Link memory link = links.getLink(linkPubKey);
-        assertEq(uint256(link.status), uint256(MozaikLinks.Status.Claimed));
+        MozaikPaylinks.Link memory link = links.getLink(linkPubKey);
+        assertEq(uint256(link.status), uint256(MozaikPaylinks.Status.Claimed));
     }
 
     function test_Fork_ReclaimPreExpiryBySender() public onlyFork {
@@ -112,7 +116,7 @@ contract MozaikLinksForkTest is Test {
         links.reclaim(linkPubKey);
 
         assertEq(usdc.balanceOf(sender), senderBefore, "sender not refunded after reclaim");
-        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Reclaimed));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikPaylinks.Status.Reclaimed));
     }
 
     function test_Fork_ReclaimPostExpiryPermissionless() public onlyFork {
@@ -132,6 +136,6 @@ contract MozaikLinksForkTest is Test {
         links.reclaim(linkPubKey);
 
         assertEq(usdc.balanceOf(sender), senderBefore, "sender not refunded after reclaim");
-        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Reclaimed));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikPaylinks.Status.Reclaimed));
     }
 }

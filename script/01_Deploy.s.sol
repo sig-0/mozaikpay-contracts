@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {MozaikAccountFactory} from "../src/account/MozaikAccountFactory.sol";
 import {MozaikVerifyingPaymaster} from "../src/paymaster/MozaikVerifyingPaymaster.sol";
-import {MozaikLinks} from "../src/paylinks/MozaikLinks.sol";
+import {MozaikPaylinks} from "../src/paylinks/MozaikPaylinks.sol";
 
 contract DeployScript is Script {
     address internal constant ENTRY_POINT_V09 = 0x433709009B8330FDa32311DF1C2AFA402eD8D009;
@@ -26,7 +26,7 @@ contract DeployScript is Script {
 
         MozaikAccountFactory factory = new MozaikAccountFactory();
         MozaikVerifyingPaymaster paymaster = new MozaikVerifyingPaymaster(sponsorAddr);
-        MozaikLinks paylinks = new MozaikLinks(IERC20(usdcAddr));
+        MozaikPaylinks paylinks = new MozaikPaylinks(IERC20(usdcAddr));
 
         vm.stopBroadcast();
 

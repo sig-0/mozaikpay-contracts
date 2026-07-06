@@ -8,7 +8,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
 /**
- * @title MozaikLinks
+ * @title MozaikPaylinks
  * @notice Non-upgradeable USDC escrow for MozaikPay payment links.
  * @dev Lifecycle:
  *      - create(): sender deposits USDC and commits to an ephemeral keypair's address
@@ -27,7 +27,7 @@ import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
  *        escrow. Funds always return to the original sender.
  *
  */
-contract MozaikLinks is ReentrancyGuardTransient, EIP712 {
+contract MozaikPaylinks is ReentrancyGuardTransient, EIP712 {
     using SafeERC20 for IERC20;
 
     /// @dev Per-link state machine. Transitions are monotonic; never reversed.
@@ -67,7 +67,7 @@ contract MozaikLinks is ReentrancyGuardTransient, EIP712 {
     /**
      * @param usdc The USDC token address. Set once and immutable.
      */
-    constructor(IERC20 usdc) EIP712("MozaikLinks", "1") {
+    constructor(IERC20 usdc) EIP712("MozaikPaylinks", "1") {
         if (address(usdc) == address(0)) revert InvalidInput();
 
         USDC = usdc;

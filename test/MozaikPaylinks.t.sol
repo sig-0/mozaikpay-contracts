@@ -6,7 +6,7 @@ import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {MozaikLinks} from "../src/paylinks/MozaikLinks.sol";
+import {MozaikPaylinks} from "../src/paylinks/MozaikPaylinks.sol";
 
 /// @dev Token that takes a 1% fee on transfer, used to verify fee-on-transfer tokens are rejected.
 contract FeeOnTransferToken is ERC20 {
@@ -29,8 +29,8 @@ contract FeeOnTransferToken is ERC20 {
     }
 }
 
-contract MozaikLinksTest is Test {
-    MozaikLinks internal links;
+contract MozaikPaylinksTest is Test {
+    MozaikPaylinks internal links;
     ERC20Mock internal usdc;
 
     event LinkCreated(address indexed claimSigner, address indexed sender, uint256 amount, uint64 expiresAt);
@@ -39,7 +39,7 @@ contract MozaikLinksTest is Test {
 
     function setUp() public {
         usdc = new ERC20Mock();
-        links = new MozaikLinks(IERC20(address(usdc)));
+        links = new MozaikPaylinks(IERC20(address(usdc)));
     }
 
     function _fund(address who) internal {
@@ -54,7 +54,7 @@ contract MozaikLinksTest is Test {
 
         return keccak256(
             abi.encode(
-                domainTypehash, keccak256(bytes("MozaikLinks")), keccak256(bytes("1")), block.chainid, address(links)
+                domainTypehash, keccak256(bytes("MozaikPaylinks")), keccak256(bytes("1")), block.chainid, address(links)
             )
         );
     }
@@ -73,8 +73,8 @@ contract MozaikLinksTest is Test {
     }
 
     function test_Constructor_InvalidZeroUsdc() public {
-        vm.expectRevert(MozaikLinks.InvalidInput.selector);
-        new MozaikLinks(IERC20(address(0)));
+        vm.expectRevert(MozaikPaylinks.InvalidInput.selector);
+        new MozaikPaylinks(IERC20(address(0)));
     }
 
     function test_Constructor_ValidUsdcImmutable() public view {
@@ -100,11 +100,11 @@ contract MozaikLinksTest is Test {
         assertEq(usdc.balanceOf(sender), senderBefore - amount);
         assertEq(usdc.balanceOf(address(links)), escrowBefore + amount);
 
-        MozaikLinks.Link memory link = links.getLink(linkPubKey);
+        MozaikPaylinks.Link memory link = links.getLink(linkPubKey);
 
         assertEq(link.sender, sender);
         assertEq(link.expiresAt, expiry);
-        assertEq(uint256(link.status), uint256(MozaikLinks.Status.Active));
+        assertEq(uint256(link.status), uint256(MozaikPaylinks.Status.Active));
         assertEq(link.amount, amount);
     }
 
@@ -114,7 +114,7 @@ contract MozaikLinksTest is Test {
         _fund(sender);
 
         vm.prank(sender);
-        vm.expectRevert(MozaikLinks.InvalidInput.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidInput.selector);
         links.create(address(0), 10_000_000, expiry);
     }
 
@@ -125,7 +125,7 @@ contract MozaikLinksTest is Test {
         _fund(sender);
 
         vm.prank(sender);
-        vm.expectRevert(MozaikLinks.InvalidInput.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidInput.selector);
         links.create(linkPubKey, 0, expiry);
     }
 
@@ -135,7 +135,7 @@ contract MozaikLinksTest is Test {
         _fund(sender);
 
         vm.prank(sender);
-        vm.expectRevert(MozaikLinks.InvalidInput.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidInput.selector);
         links.create(linkPubKey, 10_000_000, uint64(block.timestamp));
     }
 
@@ -146,7 +146,7 @@ contract MozaikLinksTest is Test {
         vm.warp(1000);
 
         vm.prank(sender);
-        vm.expectRevert(MozaikLinks.InvalidInput.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidInput.selector);
         links.create(linkPubKey, 10_000_000, uint64(999));
     }
 
@@ -161,7 +161,7 @@ contract MozaikLinksTest is Test {
         links.create(linkPubKey, amount, expiry);
 
         vm.prank(sender);
-        vm.expectRevert(MozaikLinks.InvalidLink.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidLink.selector);
         links.create(linkPubKey, amount, expiry);
     }
 
@@ -172,14 +172,14 @@ contract MozaikLinksTest is Test {
         uint64 expiry = uint64(block.timestamp + 1 days);
 
         FeeOnTransferToken feeToken = new FeeOnTransferToken();
-        MozaikLinks feeEscrow = new MozaikLinks(IERC20(address(feeToken)));
+        MozaikPaylinks feeEscrow = new MozaikPaylinks(IERC20(address(feeToken)));
 
         feeToken.mint(sender, 1_000_000_000);
         vm.prank(sender);
         feeToken.approve(address(feeEscrow), type(uint256).max);
 
         vm.prank(sender);
-        vm.expectRevert(MozaikLinks.InvalidInput.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidInput.selector);
         feeEscrow.create(linkPubKey, amount, expiry);
     }
 
@@ -204,7 +204,7 @@ contract MozaikLinksTest is Test {
         links.claim(linkPubKey, sig);
 
         assertEq(usdc.balanceOf(recipient), recipientBefore + amount);
-        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Claimed));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikPaylinks.Status.Claimed));
     }
 
     function test_Claim_InvalidNoneStatus() public {
@@ -214,7 +214,7 @@ contract MozaikLinksTest is Test {
         bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
 
         vm.prank(recipient);
-        vm.expectRevert(MozaikLinks.InvalidLink.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidLink.selector);
         links.claim(linkPubKey, sig);
     }
 
@@ -235,7 +235,7 @@ contract MozaikLinksTest is Test {
         links.claim(linkPubKey, sig);
 
         vm.prank(recipient);
-        vm.expectRevert(MozaikLinks.InvalidLink.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidLink.selector);
         links.claim(linkPubKey, sig);
     }
 
@@ -255,7 +255,7 @@ contract MozaikLinksTest is Test {
         bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
 
         vm.prank(recipient);
-        vm.expectRevert(MozaikLinks.InvalidLink.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidLink.selector);
         links.claim(linkPubKey, sig);
     }
 
@@ -274,7 +274,7 @@ contract MozaikLinksTest is Test {
         bytes memory sig = _signClaim(wrongKey, linkPubKey, recipient);
 
         vm.prank(recipient);
-        vm.expectRevert(MozaikLinks.InvalidSignature.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidSignature.selector);
         links.claim(linkPubKey, sig);
     }
 
@@ -293,7 +293,7 @@ contract MozaikLinksTest is Test {
         bytes memory sig = _signClaim(linkPrivKey, linkPubKey, other);
 
         vm.prank(recipient);
-        vm.expectRevert(MozaikLinks.InvalidSignature.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidSignature.selector);
         links.claim(linkPubKey, sig);
     }
 
@@ -311,7 +311,7 @@ contract MozaikLinksTest is Test {
         bytes memory sig = hex"1234"; // 2 bytes, not 65
 
         vm.prank(recipient);
-        vm.expectRevert(MozaikLinks.InvalidSignature.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidSignature.selector);
         links.claim(linkPubKey, sig);
     }
 
@@ -337,7 +337,7 @@ contract MozaikLinksTest is Test {
         bytes memory sig = abi.encodePacked(r, sFlipped, vFlipped);
 
         vm.prank(recipient);
-        vm.expectRevert(MozaikLinks.InvalidSignature.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidSignature.selector);
         links.claim(linkPubKey, sig);
     }
 
@@ -355,7 +355,7 @@ contract MozaikLinksTest is Test {
         bytes memory sig = new bytes(65); // all zeros, length 65
 
         vm.prank(recipient);
-        vm.expectRevert(MozaikLinks.InvalidSignature.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidSignature.selector);
         links.claim(linkPubKey, sig);
     }
 
@@ -378,7 +378,7 @@ contract MozaikLinksTest is Test {
         links.reclaim(linkPubKey);
 
         assertEq(usdc.balanceOf(sender), senderBefore + amount);
-        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Reclaimed));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikPaylinks.Status.Reclaimed));
     }
 
     function test_Reclaim_InvalidInactive() public {
@@ -386,7 +386,7 @@ contract MozaikLinksTest is Test {
         address linkPubKey = makeAddr("linkEphemeralKey");
 
         vm.prank(sender);
-        vm.expectRevert(MozaikLinks.InvalidLink.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidLink.selector);
         links.reclaim(linkPubKey);
     }
 
@@ -403,7 +403,7 @@ contract MozaikLinksTest is Test {
         address attacker = makeAddr("attacker");
 
         vm.prank(attacker);
-        vm.expectRevert(MozaikLinks.InvalidOwner.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidOwner.selector);
         links.reclaim(linkPubKey);
     }
 
@@ -428,7 +428,7 @@ contract MozaikLinksTest is Test {
         links.reclaim(linkPubKey);
 
         assertEq(usdc.balanceOf(sender), senderBefore + amount);
-        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Reclaimed));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikPaylinks.Status.Reclaimed));
     }
 
     function test_Reclaim_ValidPermissionlessPostExpiry() public {
@@ -470,7 +470,7 @@ contract MozaikLinksTest is Test {
         bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
 
         vm.prank(recipient);
-        vm.expectRevert(MozaikLinks.InvalidLink.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidLink.selector);
         links.claim(linkPubKey, sig);
     }
 
@@ -491,7 +491,7 @@ contract MozaikLinksTest is Test {
 
         vm.prank(randomCaller);
         links.reclaim(linkPubKey);
-        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Reclaimed));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikPaylinks.Status.Reclaimed));
     }
 
     function test_Claim_ValidOneSecondBeforeExpiry() public {
@@ -510,7 +510,7 @@ contract MozaikLinksTest is Test {
 
         vm.prank(recipient);
         links.claim(linkPubKey, sig);
-        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Claimed));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikPaylinks.Status.Claimed));
     }
 
     function test_Reclaim_SenderValidOneSecondBeforeExpiry() public {
@@ -527,7 +527,7 @@ contract MozaikLinksTest is Test {
 
         vm.prank(sender);
         links.reclaim(linkPubKey);
-        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikLinks.Status.Reclaimed));
+        assertEq(uint256(links.getLink(linkPubKey).status), uint256(MozaikPaylinks.Status.Reclaimed));
     }
 
     function test_Reclaim_NonSenderInvalidOneSecondBeforeExpiry() public {
@@ -544,7 +544,7 @@ contract MozaikLinksTest is Test {
 
         address randomCaller = makeAddr("randomCaller");
         vm.prank(randomCaller);
-        vm.expectRevert(MozaikLinks.InvalidOwner.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidOwner.selector);
         links.reclaim(linkPubKey);
     }
 
@@ -564,11 +564,11 @@ contract MozaikLinksTest is Test {
         links.claim(linkPubKey, sig);
 
         vm.prank(sender);
-        vm.expectRevert(MozaikLinks.InvalidLink.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidLink.selector);
         links.reclaim(linkPubKey);
 
         vm.warp(expiry);
-        vm.expectRevert(MozaikLinks.InvalidLink.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidLink.selector);
         links.reclaim(linkPubKey);
     }
 
@@ -588,12 +588,12 @@ contract MozaikLinksTest is Test {
 
         bytes memory sig = _signClaim(linkPrivKey, linkPubKey, recipient);
         vm.prank(recipient);
-        vm.expectRevert(MozaikLinks.InvalidLink.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidLink.selector);
         links.claim(linkPubKey, sig);
 
         vm.warp(expiry);
         vm.prank(sender);
-        vm.expectRevert(MozaikLinks.InvalidLink.selector);
+        vm.expectRevert(MozaikPaylinks.InvalidLink.selector);
         links.reclaim(linkPubKey);
     }
 
@@ -637,7 +637,7 @@ contract MozaikLinksTest is Test {
         vm.prank(sender);
         links.create(linkPubKey, amount, expiry);
 
-        MozaikLinks.Link memory link = links.getLink(linkPubKey);
+        MozaikPaylinks.Link memory link = links.getLink(linkPubKey);
         assertEq(link.amount, amount);
         assertEq(usdc.balanceOf(address(links)), 999 + amount);
     }
