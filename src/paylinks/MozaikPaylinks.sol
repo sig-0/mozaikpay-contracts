@@ -78,7 +78,7 @@ contract MozaikPaylinks is ReentrancyGuardTransient, EIP712 {
      * @param claimSigner Address of the ephemeral keypair whose private key gates claims.
      *                    Doubles as the link's unique identifier.
      * @param amount      USDC amount in token-minor units (6 decimals).
-     * @param expiresAt   Unix timestamp after which claims revert and sweeping is permitted.
+     * @param expiresAt   Unix timestamp at or after which claims revert and sweeping is permitted.
      */
     function create(address claimSigner, uint256 amount, uint64 expiresAt) external nonReentrant {
         // Sanity checks

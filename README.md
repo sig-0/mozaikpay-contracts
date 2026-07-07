@@ -33,7 +33,8 @@ Four contracts are deployed per environment:
 2. **MozaikVerifyingPaymaster** -- Sponsors gas for UserOperations. Constructor takes the sponsor wallet address; the
    canonical EntryPoint v0.9 is hardcoded.
 3. **MozaikAccount** (implementation) -- Deployed automatically by the factory constructor. Not called directly.
-4. **MozaikPaylinks** -- Non-upgradeable USDC escrow for payment links. Deployed by `01_Deploy.s.sol` alongside the account/paymaster stack, bound to the chain's USDC.
+4. **MozaikPaylinks** -- Non-upgradeable USDC escrow for payment links. Deployed by `01_Deploy.s.sol` alongside the
+   account/paymaster stack, bound to the chain's USDC.
    Constructor takes the USDC token address; immutable thereafter. Lifecycle: `create` (sender locks USDC under an
    ephemeral `claimSigner`), `claim` (recipient redeems with an EIP-712 signature over the claim payload), `reclaim`
    (sender returns funds; sender-only pre-expiry, permissionless at or after expiry).
@@ -65,6 +66,10 @@ PAYLINKS_ADDRESS=0x<deployed_paylinks_address>
 # 01_Deploy.s.sol (optional) -- override the paylinks USDC token. Defaults to the
 # canonical USDC for the target chain (Base mainnet/sepolia) when unset.
 # USDC_ADDRESS=0x<usdc_address_for_chain>
+
+# Source verification on Basescan (see "Etherscan (Basescan) Source Verification").
+# One Etherscan V2 API key covers both Base mainnet (8453) and Sepolia (84532).
+ETHERSCAN_API_KEY=<your_etherscan_v2_api_key>
 ```
 
 | Variable             | Required By                                                | Description                                                                                                                               |
@@ -76,8 +81,9 @@ PAYLINKS_ADDRESS=0x<deployed_paylinks_address>
 | `DEPOSIT_AMOUNT_WEI` | `02_FundPaymaster`                                         | ETH to deposit into the EntryPoint on behalf of the paymaster, in wei                                                                     |
 | `NEW_OWNER_ADDRESS`  | `03_TransferOwnership`                                     | Address to transfer paymaster ownership to (optional)                                                                                     |
 | `FACTORY_ADDRESS`    | `VerifyDeploy`                                             | Address of the deployed factory contract (output of step 1)                                                                               |
-| `PAYLINKS_ADDRESS`   | `VerifyDeploy`                                             | Address of the deployed MozaikPaylinks contract (output of step 1)                                                                           |
+| `PAYLINKS_ADDRESS`   | `VerifyDeploy`                                             | Address of the deployed MozaikPaylinks contract (output of step 1)                                                                        |
 | `USDC_ADDRESS`       | `01_Deploy` (optional)                                     | Overrides the paylinks USDC token. Defaults to the canonical USDC for the target chain (see chain reference table)                        |
+| `ETHERSCAN_API_KEY`  | Source verification (`--verify`, `verify-account-*`)       | Etherscan V2 API key; one key verifies contracts on both Base chains                                                                      |
 
 ## Step-by-Step Deployment
 
@@ -112,7 +118,8 @@ USDC:         0x...
 Paylinks:     0x...
 ```
 
-**Save the Factory, Paymaster, and Paylinks addresses.** You'll need them for the API config (incl. `MOZAIK_PAYLINKS_ADDR`) and the next steps.
+**Save the Factory, Paymaster, and Paylinks addresses.** You'll need them for the API config (incl.
+`MOZAIK_PAYLINKS_ADDR`) and the next steps.
 
 ### Step 2: Fund the Paymaster
 
@@ -166,15 +173,94 @@ make transfer-ownership-sepolia EXTRA="--broadcast --account deployer"
 
 Ownership uses OpenZeppelin's `Ownable2Step` -- the new owner must call `acceptOwnership()` to finalize.
 
+## Etherscan (Basescan) Source Verification
+
+This is separate from "Step 3: Verify Deployment" above, which only checks
+on-chain state. This section publishes the Solidity **source** to Basescan so
+anyone viewing a contract address sees verified code and can Read/Write it.
+
+**Why accounts only need to be verified once.** Every user account is an
+identical-bytecode `ERC1967Proxy` (only its constructor arguments differ, and
+those are not part of runtime bytecode). Basescan's "Similar Match" verifies any
+contract whose bytecode matches an already-verified one, so verifying a single
+account makes every other account show source automatically. Basescan also
+auto-detects the EIP-1967 implementation slot, so once the `MozaikAccount`
+implementation is verified, every account exposes its ABI under "Read as Proxy".
+
+Prerequisite: `ETHERSCAN_API_KEY` set in `.env` (see Environment
+Variables). One Etherscan V2 key works for both Base chains.
+
+All commands below use Base Sepolia (`--chain 84532`). For mainnet use
+`--chain 8453` and the `-mainnet` make target. Mainnet verification, like mainnet
+deployment, should only be run with explicit approval.
+
+### Future deploys (automatic)
+
+Pass `--verify` when broadcasting the deploy. Foundry verifies the factory,
+paymaster, paylinks, and (normally) the account implementation as it deploys them:
+
+```bash
+make deploy-sepolia EXTRA="--broadcast --verify --account deployer"
+```
+
+### Already-deployed core contracts (retroactive, once each)
+
+For a stack deployed before verification was wired up, verify each core contract
+by address. Factory and implementation take no constructor arguments; paymaster
+and paylinks each take one address:
+
+```bash
+# Factory (no constructor args)
+forge verify-contract <FACTORY> \
+  src/account/MozaikAccountFactory.sol:MozaikAccountFactory --chain 84532 --watch
+
+# Account implementation (no constructor args)
+forge verify-contract <IMPL> \
+  src/account/MozaikAccount.sol:MozaikAccount --chain 84532 --watch
+
+# Paymaster (constructor: sponsor address)
+forge verify-contract <PAYMASTER> \
+  src/paymaster/MozaikVerifyingPaymaster.sol:MozaikVerifyingPaymaster --chain 84532 \
+  --constructor-args $(cast abi-encode "constructor(address)" <SPONSOR>) --watch
+
+# Paylinks (constructor: USDC address)
+forge verify-contract <PAYLINKS> \
+  src/paylinks/MozaikPaylinks.sol:MozaikPaylinks --chain 84532 \
+  --constructor-args $(cast abi-encode "constructor(address)" <USDC>) --watch
+```
+
+`<IMPL>` is the factory's `ACCOUNT_IMPLEMENTATION()`; `<SPONSOR>` and `<USDC>` are
+the values logged by `01_Deploy` (Step 1).
+
+### Accounts (anchor one, Similar Match covers the rest)
+
+Pick any one deployed account and verify it. Basescan then shows every other
+account as a Similar Match automatically:
+
+```bash
+ACCOUNT=0x<account> IMPL=0x<impl> SPENDING=0x<spending> RECOVERY=0x<recovery> \
+  make verify-account-sepolia
+```
+
+`SPENDING` / `RECOVERY` are the account's signer pair (from its `AccountCreated`
+event or the app's wallet record).
+
+### When to repeat
+
+- Core contracts: once per deployed address, or automatically via `--verify` on
+  future deploys.
+- Accounts: once per factory version. A new factory changes the proxy bytecode,
+  so re-anchor one account from the new factory to refresh Similar Match.
+
 ## Output Summary
 
 After deployment, record these values for the API and mobile configuration:
 
-| Value               | Used By                                                          | Example                               |
-|---------------------|------------------------------------------------------------------|---------------------------------------|
-| Factory address     | API (`MOZAIK_ACCOUNT_FACTORY`)                                   | `0xABC...`                            |
-| Paymaster address   | API (`MOZAIK_PAYMASTER_ADDRESS`)                                 | `0xDEF...`                            |
+| Value                  | Used By                                                          | Example                               |
+|------------------------|------------------------------------------------------------------|---------------------------------------|
+| Factory address        | API (`MOZAIK_ACCOUNT_FACTORY`)                                   | `0xABC...`                            |
+| Paymaster address      | API (`MOZAIK_PAYMASTER_ADDRESS`)                                 | `0xDEF...`                            |
 | MozaikPaylinks address | API (`MOZAIK_PAYLINKS_ADDR`)                                     | `0x123...`                            |
-| Sponsor private key | API (`MOZAIK_PAYMASTER_SPONSOR_KEY`)                             | 64-char hex, no `0x` prefix           |
-| USDC address        | API (`MOZAIK_USDC_ADDRESS`), Mobile (`EXPO_PUBLIC_USDC_ADDRESS`) | See chain reference table above       |
-| Chain ID            | API (`MOZAIK_CHAIN_ID`)                                          | `84532` (Sepolia) or `8453` (mainnet) |
+| Sponsor private key    | API (`MOZAIK_PAYMASTER_SPONSOR_KEY`)                             | 64-char hex, no `0x` prefix           |
+| USDC address           | API (`MOZAIK_USDC_ADDRESS`), Mobile (`EXPO_PUBLIC_USDC_ADDRESS`) | See chain reference table above       |
+| Chain ID               | API (`MOZAIK_CHAIN_ID`)                                          | `84532` (Sepolia) or `8453` (mainnet) |

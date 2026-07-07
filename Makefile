@@ -186,3 +186,24 @@ verify-sepolia:
 verify-mainnet:
 	forge script script/VerifyDeploy.s.sol \
 		--rpc-url base_mainnet
+
+# Basescan source verification for a single deployed account proxy. Basescan
+# then shows every account with matching bytecode via Similar Match, so this
+# runs once per factory version, not once per account.
+# Requires ACCOUNT, IMPL, SPENDING, and RECOVERY in the env.
+
+.PHONY: verify-account-sepolia
+verify-account-sepolia:
+	forge verify-contract $(ACCOUNT) \
+		lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \
+		--chain 84532 \
+		--constructor-args $$(cast abi-encode "constructor(address,bytes)" $(IMPL) $$(cast calldata "initialize(address,address)" $(SPENDING) $(RECOVERY))) \
+		--watch
+
+.PHONY: verify-account-mainnet
+verify-account-mainnet:
+	forge verify-contract $(ACCOUNT) \
+		lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol:ERC1967Proxy \
+		--chain 8453 \
+		--constructor-args $$(cast abi-encode "constructor(address,bytes)" $(IMPL) $$(cast calldata "initialize(address,address)" $(SPENDING) $(RECOVERY))) \
+		--watch

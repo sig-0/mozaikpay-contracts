@@ -81,8 +81,10 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
      *      over only the fields the sponsor commits to (see _paymasterDigest), and
      *      MozaikPay sponsors unconditionally with no per-op cost cap.
      *
-     *      Never reverts - a bad signature returns sigFailed=true which the EntryPoint
-     *      treats as a validation failure without reverting the bundle.
+     *      An invalid signature returns sigFailed=true rather than reverting, so the
+     *      EntryPoint records a validation failure and bundlers can still simulate.
+     *      Structurally malformed paymasterAndData can revert during decoding, which the
+     *      EntryPoint surfaces as a failed op.
      */
     function _validatePaymasterUserOp(
         PackedUserOperation calldata userOp,

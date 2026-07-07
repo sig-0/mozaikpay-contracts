@@ -16,10 +16,10 @@ import {SIG_VALIDATION_FAILED, SIG_VALIDATION_SUCCESS} from "account-abstraction
  * @notice ERC-4337 smart account used by MozaikPay. Deployed as a UUPS proxy via MozaikAccountFactory.
  * @dev Two keys govern the account with strictly separated powers:
  *
- *      - spendingSigner  (secp256k1, lives on the user's device)
+ *      - spendingSigner  (secp256k1)
  *        Can execute arbitrary calls (execute / executeBatch). Rotated only by the recovery key.
  *
- *      - recoverySigner  (secp256k1, stored in a secure backup)
+ *      - recoverySigner  (secp256k1)
  *        Can rotate either signer and authorize contract upgrades.
  *        Cannot execute arbitrary calls.
  *
@@ -138,8 +138,8 @@ contract MozaikAccount is BaseAccount, UUPSUpgradeable, Initializable, IAccountE
 
     /**
      * @notice Initialises the proxy with its two signers. Called once by the factory at deployment.
-     * @param spender  The initial spending signer (device key).
-     * @param recovery The initial recovery signer (backup key).
+     * @param spender  The initial spending signer.
+     * @param recovery The initial recovery signer.
      */
     function initialize(address spender, address recovery) external initializer {
         if (spender == address(0) || recovery == address(0)) revert ZeroAddress();
