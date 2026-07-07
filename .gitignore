@@ -12,6 +12,7 @@ e2e/.env.e2e
 echidna-corpus/
 echidna-corpus-*/
 crytic-export/
+mutation_campaign/
 
 # Deploy artifacts
 broadcast/

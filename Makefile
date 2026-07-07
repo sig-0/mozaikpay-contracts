@@ -62,9 +62,18 @@ test-e2e:
 test-match:
 	forge test --match-test "$(PATTERN)" -vvv
 
+# Minimum src/ line coverage enforced by coverage-check (CI gate).
+COVERAGE_MIN ?= 99
+
 .PHONY: coverage
 coverage:
-	forge coverage --no-match-test "Fork\|fork" --no-match-path "e2e/*"
+	forge coverage --no-match-test "Fork\|fork" --no-match-path "e2e/*" --report summary --report lcov
+
+# Regenerates coverage and fails if src/ line coverage drops below COVERAGE_MIN.
+# lcov.info holds only src/ files (no_match_coverage excludes test/script/lib/e2e/mocks).
+.PHONY: coverage-check
+coverage-check: coverage
+	@awk -F: '/^LF:/{f+=$$2} /^LH:/{h+=$$2} END{ if (f==0) { print "no coverage data in lcov.info"; exit 1 } pct=100*h/f; printf "src/ line coverage: %.2f%% (%d/%d), floor %d%%\n", pct, h, f, $(COVERAGE_MIN); if (pct+1e-9 < $(COVERAGE_MIN)) { print "FAIL: coverage below floor"; exit 1 } print "coverage OK" }' lcov.info
 
 .PHONY: snapshot
 snapshot:
@@ -74,7 +83,33 @@ snapshot:
 
 .PHONY: slither
 slither:
-	slither src/
+	slither src/ --fail-high
+
+# Mutation testing (Trail of Bits slither-mutate). Slow: reruns the test suite
+# once per generated mutant. Informational only. Surfaces surviving (uncaught)
+# mutants under mutation_campaign/ for review. Reduced fuzz runs keep it
+# tractable; re-check any survivor with full fuzz before treating it as a gap.
+#
+# slither-mutate rewrites src/ in place and restores it after each mutant, so an
+# interrupted run can leave a mutant behind. To keep the working tree pristine no
+# matter how the run ends, the campaign executes inside a throwaway git worktree
+# checked out at HEAD; lib/ is symlinked from the main checkout (deps are never
+# mutated) and the report is written back to ./mutation_campaign.
+MUTATE_TEST_CMD ?= FOUNDRY_FUZZ_RUNS=1000 forge test --no-match-contract "UserOpFlow|Fork" --no-match-path "e2e/*"
+
+.PHONY: mutate
+mutate:
+	@set -e; \
+	root="$$(pwd)"; \
+	tmp="$$(mktemp -d)"; \
+	wt="$$tmp/wt"; \
+	trap 'git worktree remove --force "$$wt" >/dev/null 2>&1; rm -rf "$$tmp"; git worktree prune' EXIT INT TERM; \
+	git worktree add --detach --quiet "$$wt" HEAD; \
+	rm -rf "$$wt/contracts/lib"; \
+	ln -s "$$root/lib" "$$wt/contracts/lib"; \
+	rm -rf "$$root/mutation_campaign"; \
+	cd "$$wt/contracts"; \
+	slither-mutate src/ --test-cmd '$(MUTATE_TEST_CMD)' --timeout 300 --output-dir "$$root/mutation_campaign"
 
 # Echidna suite
 # https://github.com/crytic/echidna

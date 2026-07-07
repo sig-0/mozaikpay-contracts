@@ -264,3 +264,52 @@ After deployment, record these values for the API and mobile configuration:
 | Sponsor private key    | API (`MOZAIK_PAYMASTER_SPONSOR_KEY`)                             | 64-char hex, no `0x` prefix           |
 | USDC address           | API (`MOZAIK_USDC_ADDRESS`), Mobile (`EXPO_PUBLIC_USDC_ADDRESS`) | See chain reference table above       |
 | Chain ID               | API (`MOZAIK_CHAIN_ID`)                                          | `84532` (Sepolia) or `8453` (mainnet) |
+
+## Continuous Integration
+
+Every push to `main` and every pull request touching `contracts/**` runs these required checks (one workflow each under
+`.github/workflows/contracts-*.yaml`):
+
+| Check    | Command                        | Gates                                                      |
+|----------|--------------------------------|------------------------------------------------------------|
+| Test     | `make test` + `make test-fork` | Unit, fuzz, invariant, and Base Sepolia fork tests         |
+| Lint     | `forge lint src/ --deny notes` | Solidity lint on production code                           |
+| Echidna  | `make echidna`                 | Property-based fuzzing (paymaster, account, paylinks)      |
+| E2E      | `make test-e2e`                | Full lifecycle against a local anvil node                  |
+| Slither  | `make slither`                 | Static analysis; fails on new High-severity findings       |
+| Coverage | `make coverage-check`          | `src/` line coverage must stay at or above the floor (99%) |
+
+Mutation testing (`make mutate`) runs on a **weekly schedule and on demand only** (`contracts-mutation.yaml`), never as
+a PR gate. It reruns the suite once per generated mutant, so it is slow; surviving (uncaught) mutants are uploaded as an
+artifact for review rather than blocking merges. Because `slither-mutate` rewrites `src/` in place, `make mutate` runs the
+campaign inside a throwaway `git worktree` at HEAD, so an interrupted run can never leave a mutant in the working tree.
+
+### Static analysis (Slither)
+
+`make slither` runs `slither src/ --fail-high` (`lib/` is excluded via `slither.config.json`). The gate blocks only
+**High**-severity findings; the full report is still printed to the CI log for reviewers. The current output is 12
+results, all reviewed and accepted as benign:
+
+| Detector            | Severity | Count | Why it is safe                                                                                                                                                                           |
+|---------------------|----------|-------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `unused-return`     | Medium   | 5     | `ECDSA.tryRecover` returns `(address, RecoverError, bytes32)`; call sites bind the address and error and check the error, intentionally ignoring the third element (the error argument). |
+| `timestamp`         | Low      | 3     | `MozaikPaylinks` compares `block.timestamp` for payment-link expiry over day/week windows where validator drift is irrelevant and there is no EVM alternative.                           |
+| `assembly`          | Info     | 1     | `MozaikAccount` uses inline assembly only for its ERC-7201 namespaced storage slot (standard pattern).                                                                                   |
+| `naming-convention` | Info     | 3     | `ACCOUNT_IMPLEMENTATION`, `SENDER_CREATOR`, and `USDC` are `immutable`/`constant`, conventionally `SCREAMING_SNAKE_CASE`.                                                                |
+
+Slither also prints IR-generation errors for OpenZeppelin's `EIP712` constructor (`_EIP712Name` / `_EIP712Version`);
+these are a limitation of Slither parsing OZ's `ShortStrings` assembly, affect only `lib/` code, and do not change the
+exit code. Because every finding tops out at Medium and is reviewed-benign, `--fail-high` keeps the gate low-noise while
+still blocking the severity that maps to a must-fix issue. Re-run `make slither` locally after changing `src/` and
+review any new finding before merging.
+
+### Coverage
+
+`make coverage-check` regenerates `lcov.info` (`forge coverage`, excluding fork and e2e tests) and fails if `src/` line
+coverage drops below `COVERAGE_MIN` (99%, set in the `Makefile`). `no_match_coverage` in `foundry.toml` keeps the report
+scoped to production code (tests, scripts, `lib`, e2e, and mocks are excluded).
+
+Current coverage is 99.47% (189/190 lines). The single uncovered line is the `MozaikVerifyingPaymaster` constructor's
+`BasePaymaster(...)` base-initializer line: the constructor provably runs (its body lines are covered), but
+`forge coverage` does not attribute a hit to the base-initializer line. This is a coverage-instrumentation artifact, not
+a missing test, so 100% is not reachable and the floor sits just below.
