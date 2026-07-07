@@ -7,8 +7,8 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 import {SIG_VALIDATION_FAILED} from "account-abstraction/core/Helpers.sol";
 
-import {BaseTest} from "./BaseTest.t.sol";
-import {MozaikAccount} from "../src/account/MozaikAccount.sol";
+import {BaseTest} from "../BaseTest.t.sol";
+import {MozaikAccount} from "../../src/account/MozaikAccount.sol";
 
 contract VersionedMozaikAccount is MozaikAccount {
     function version() external pure returns (uint256) {

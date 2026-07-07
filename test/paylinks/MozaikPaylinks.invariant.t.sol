@@ -5,7 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {MozaikPaylinks} from "../src/paylinks/MozaikPaylinks.sol";
+import {MozaikPaylinks} from "../../src/paylinks/MozaikPaylinks.sol";
 
 /// @notice Invariant handler that drives the MozaikPaylinks state machine via random calls.
 /// @dev Tracks ghost state for each created link so the invariant test can sum active

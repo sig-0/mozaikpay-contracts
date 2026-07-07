@@ -6,7 +6,7 @@ import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {MozaikPaylinks} from "../src/paylinks/MozaikPaylinks.sol";
+import {MozaikPaylinks} from "../../src/paylinks/MozaikPaylinks.sol";
 
 /// @dev Token that takes a 1% fee on transfer, used to verify fee-on-transfer tokens are rejected.
 contract FeeOnTransferToken is ERC20 {

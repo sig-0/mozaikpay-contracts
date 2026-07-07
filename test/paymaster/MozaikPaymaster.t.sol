@@ -4,9 +4,9 @@ pragma solidity ^0.8.28;
 import {IPaymaster} from "account-abstraction/interfaces/IPaymaster.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 
-import {BaseTest} from "./BaseTest.t.sol";
-import {MozaikAccount} from "../src/account/MozaikAccount.sol";
-import {MozaikVerifyingPaymaster} from "../src/paymaster/MozaikVerifyingPaymaster.sol";
+import {BaseTest} from "../BaseTest.t.sol";
+import {MozaikAccount} from "../../src/account/MozaikAccount.sol";
+import {MozaikVerifyingPaymaster} from "../../src/paymaster/MozaikVerifyingPaymaster.sol";
 
 contract MozaikPaymasterTest is BaseTest {
     MozaikAccount internal account;

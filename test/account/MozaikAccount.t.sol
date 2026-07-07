@@ -6,8 +6,8 @@ import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOper
 import {SIG_VALIDATION_SUCCESS, SIG_VALIDATION_FAILED} from "account-abstraction/core/Helpers.sol";
 import {BaseAccount} from "account-abstraction/core/BaseAccount.sol";
 
-import {BaseTest} from "./BaseTest.t.sol";
-import {MozaikAccount} from "../src/account/MozaikAccount.sol";
+import {BaseTest} from "../BaseTest.t.sol";
+import {MozaikAccount} from "../../src/account/MozaikAccount.sol";
 
 contract MozaikAccountTest is BaseTest {
     MozaikAccount internal account;

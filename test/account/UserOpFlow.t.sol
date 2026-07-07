@@ -6,10 +6,10 @@ import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOper
 
 import {BaseAccount} from "account-abstraction/core/BaseAccount.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
-import {BaseTest} from "./BaseTest.t.sol";
-import {MozaikAccount} from "../src/account/MozaikAccount.sol";
-import {MozaikAccountFactory} from "../src/account/MozaikAccountFactory.sol";
-import {MozaikVerifyingPaymaster} from "../src/paymaster/MozaikVerifyingPaymaster.sol";
+import {BaseTest} from "../BaseTest.t.sol";
+import {MozaikAccount} from "../../src/account/MozaikAccount.sol";
+import {MozaikAccountFactory} from "../../src/account/MozaikAccountFactory.sol";
+import {MozaikVerifyingPaymaster} from "../../src/paymaster/MozaikVerifyingPaymaster.sol";
 
 contract MockMozaikAccountV2 is MozaikAccount {
     function version() external pure returns (uint256) {

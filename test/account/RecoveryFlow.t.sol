@@ -4,8 +4,8 @@ pragma solidity ^0.8.28;
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {SIG_VALIDATION_FAILED} from "account-abstraction/core/Helpers.sol";
 
-import {BaseTest} from "./BaseTest.t.sol";
-import {MozaikAccount} from "../src/account/MozaikAccount.sol";
+import {BaseTest} from "../BaseTest.t.sol";
+import {MozaikAccount} from "../../src/account/MozaikAccount.sol";
 
 contract MockMozaikAccountV2 is MozaikAccount {
     function version() external pure returns (uint256) {

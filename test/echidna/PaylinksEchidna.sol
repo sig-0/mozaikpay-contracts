@@ -16,19 +16,25 @@ contract MintableERC20 is ERC20 {
 }
 
 /// @notice Echidna fuzz target for MozaikPaylinks.
-/// @dev Echidna can't generate valid ECDSA signatures, so this target focuses on the
-///      non-cryptographic state machine: createLink, reclaim (sender-only pre-expiry,
+/// @dev Echidna can't generate valid ECDSA signatures, so this target drives the
+///      non-cryptographic state machine: create, reclaim (sender-only pre-expiry,
 ///      permissionless post-expiry), direct dust transfers, and the invariants the
-///      contract must hold across them.
+///      contract must hold across them. The claim path needs a real signature and is
+///      covered by the Foundry invariant suite (MozaikPaylinks.invariant.t.sol).
 ///
-///      Key invariant: sum(active amounts) <= USDC.balanceOf(escrow). The handler tracks
-///      a ghost `activeTotal` that increments on successful create and decrements on
-///      successful reclaim; the property compares against the contract's USDC balance.
+///      Ghost accounting lets the properties pin down the escrow's balance exactly:
+///        - activeTotal: sum of amounts in still-active links (create adds, reclaim subtracts).
+///        - createdTotal / dustTotal / reclaimedTotal: every unit that entered escrow via a
+///          create or a dust transfer, and every unit reclaimed back out to the sender.
+///      With no claim path, the balance is fully determined: created + dust - reclaimed.
 contract PaylinksEchidna {
     MozaikPaylinks public links;
     MintableERC20 public usdc;
 
     uint256 public activeTotal;
+    uint256 public createdTotal;
+    uint256 public dustTotal;
+    uint256 public reclaimedTotal;
     uint256 public createCount;
     uint256 public reclaimSenderCount;
     uint256 public reclaimPermissionlessCount;
@@ -37,8 +43,6 @@ contract PaylinksEchidna {
     address[] internal _signers;
     mapping(address => bool) internal _seen;
     mapping(address => MozaikPaylinks.Status) internal _lastStatus;
-
-    address internal constant SENDER = address(0xA11CE);
 
     constructor() {
         usdc = new MintableERC20();
@@ -63,15 +67,14 @@ contract PaylinksEchidna {
         uint64 expiresAt = uint64(block.timestamp) + uint64(expiryOffset);
         if (expiresAt <= block.timestamp) return;
 
-        usdc.mint(SENDER, amount);
-
-        // The "sender" is a fixed pseudo-EOA so the sender-only path is testable from a single principal.
-        // Echidna can't `vm.prank`; we route through a tiny shim that approves+forwards.
+        // The sender is a fixed shim contract so the sender-only reclaim path is testable from a
+        // single principal. Echidna can't vm.prank; the shim approves and forwards on its behalf.
         _proxyCreate(claimSigner, amount, expiresAt);
 
         _signers.push(claimSigner);
         _seen[claimSigner] = true;
         activeTotal += amount;
+        createdTotal += amount;
         createCount += 1;
 
         _trackStatus(claimSigner);
@@ -86,6 +89,7 @@ contract PaylinksEchidna {
 
         try EchidnaSenderShim(senderShim()).reclaim(claimSigner) {
             activeTotal -= link.amount;
+            reclaimedTotal += link.amount;
             reclaimSenderCount += 1;
         } catch {
             // Revert is acceptable in fuzzing (fuzzer ignores and moves on)
@@ -104,6 +108,7 @@ contract PaylinksEchidna {
 
         try links.reclaim(claimSigner) {
             activeTotal -= link.amount;
+            reclaimedTotal += link.amount;
             reclaimPermissionlessCount += 1;
         } catch {}
 
@@ -115,6 +120,7 @@ contract PaylinksEchidna {
 
         usdc.mint(address(this), amount);
         usdc.transfer(address(links), amount);
+        dustTotal += amount;
     }
 
     /// @notice Sum of currently-active link amounts must never exceed the escrow's USDC balance.
@@ -122,15 +128,20 @@ contract PaylinksEchidna {
         return activeTotal <= usdc.balanceOf(address(links));
     }
 
+    /// @notice The escrow balance is exactly what entered (create + dust) minus what was reclaimed.
+    function echidna_escrow_conserved() external view returns (bool) {
+        return usdc.balanceOf(address(links)) == createdTotal + dustTotal - reclaimedTotal;
+    }
+
+    /// @notice Every reclaim returns funds to the original sender (the shim), never to the caller,
+    ///         so the shim's balance equals the total ever reclaimed.
+    function echidna_reclaim_pays_sender() external view returns (bool) {
+        return usdc.balanceOf(address(_senderShim)) == reclaimedTotal;
+    }
+
     /// @notice A link's status enum value is monotonic: None(0) -> Active(1) -> {Claimed(2), Reclaimed(3)}.
     function echidna_status_monotonic() external view returns (bool) {
         return !statusEverWentBackwards;
-    }
-
-    /// @notice Read-only sanity: the contract holds at least the sum of all unreclaimed
-    ///         active link amounts, and any dust on top.
-    function echidna_balance_ge_active() external view returns (bool) {
-        return usdc.balanceOf(address(links)) >= activeTotal;
     }
 
     EchidnaSenderShim internal _senderShim;

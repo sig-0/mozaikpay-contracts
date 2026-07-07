@@ -25,6 +25,11 @@ contract HarnessPaymaster is MozaikVerifyingPaymaster {
 ///      pinned operation's digest) is installed as the sponsor at deploy time. That makes the
 ///      signature a genuine sponsor approval for the pinned operation, letting the harness
 ///      exercise both the accept and reject paths of validation with a real ECDSA signer.
+///
+///      The pinned signature is also the lever for the strongest property here: mutate any one
+///      field the digest binds to, keep the signature, and sponsorship must fail. That fuzzes the
+///      anti-replay / anti-tamper guarantee across every bound field, rather than checking one
+///      hardcoded accept/reject pair.
 contract PaymasterEchidna {
     address internal constant ENTRY_POINT_V09 = 0x433709009B8330FDa32311DF1C2AFA402eD8D009;
 
@@ -45,11 +50,18 @@ contract PaymasterEchidna {
     uint48 internal constant VALID_UNTIL = type(uint48).max;
     uint48 internal constant VALID_AFTER = 0;
 
+    /// @dev Number of distinct digest-bound fields the binding probe can mutate.
+    uint8 internal constant BOUND_FIELDS = 9;
+
     EntryPoint internal entryPoint;
     HarnessPaymaster internal paymaster;
 
     uint256 internal totalDeposited;
     uint256 internal totalWithdrawn;
+
+    /// @dev Set if a mutated operation (differing from the pinned op in a digest-bound field) was
+    ///      ever sponsored while carrying the unchanged pinned signature.
+    bool internal bindingBroken;
 
     constructor() payable {
         entryPoint = EntryPoint(payable(ENTRY_POINT_V09));
@@ -93,13 +105,19 @@ contract PaymasterEchidna {
         return (validationData & type(uint160).max) != 0;
     }
 
-    /// @notice The EntryPoint deposit never drops below net deposits minus withdrawals.
-    function echidna_deposit_never_negative() external view returns (bool) {
-        return entryPoint.balanceOf(address(paymaster)) + totalWithdrawn >= totalDeposited;
+    /// @notice The pinned signature approves only the pinned operation: changing any digest-bound
+    ///         field must break sponsorship.
+    function echidna_digest_binding_holds() external view returns (bool) {
+        return !bindingBroken;
+    }
+
+    /// @notice The EntryPoint deposit equals net deposits minus withdrawals, exactly.
+    function echidna_deposit_accounting_exact() external view returns (bool) {
+        return entryPoint.balanceOf(address(paymaster)) + totalWithdrawn == totalDeposited;
     }
 
     function deposit(uint96 amount) external {
-        if (amount == 0) return;
+        if (amount == 0 || uint256(amount) > address(this).balance) return;
 
         paymaster.deposit{value: uint256(amount)}();
         totalDeposited += uint256(amount);
@@ -116,34 +134,60 @@ contract PaymasterEchidna {
         totalWithdrawn += a;
     }
 
-    /// @dev Mirror of the paymaster's approval digest over the pinned operation.
-    function _pinnedDigest() internal view returns (bytes32) {
+    /// @notice Mutate one digest-bound field of the pinned operation while keeping the pinned
+    ///         signature, then validate. If the field actually changed, sponsorship must fail.
+    function probeBinding(uint8 fieldSel, uint256 value) external {
+        (PackedUserOperation memory op, bool differs) = _mutatedOp(fieldSel % BOUND_FIELDS, value);
+        if (!differs) return;
+
+        uint256 validationData = paymaster.exposedValidate(op);
+        bool sponsored = (validationData & type(uint160).max) == 0;
+
+        if (sponsored) bindingBroken = true;
+    }
+
+    /// @dev The paymaster's approval digest over the given operation fields and time window.
+    ///      Mirrors MozaikVerifyingPaymaster._paymasterDigest.
+    function _digest(PackedUserOperation memory op, uint48 validUntil, uint48 validAfter)
+        internal
+        view
+        returns (bytes32)
+    {
         return keccak256(
             abi.encode(
                 address(paymaster),
                 block.chainid,
-                SPONSORED_SENDER,
-                uint256(0), // nonce
-                keccak256(""), // initCode hash
-                keccak256(""), // callData hash
-                bytes32(0), // accountGasLimits
-                uint256(0), // preVerificationGas
-                bytes32(0), // gasFees
-                VALID_UNTIL,
-                VALID_AFTER
+                op.sender,
+                op.nonce,
+                keccak256(op.initCode),
+                keccak256(op.callData),
+                op.accountGasLimits,
+                op.preVerificationGas,
+                op.gasFees,
+                validUntil,
+                validAfter
             )
         );
     }
 
+    /// @dev The digest the sponsor signature was derived from: the pinned operation and window.
+    function _pinnedDigest() internal view returns (bytes32) {
+        PackedUserOperation memory op;
+        op.sender = SPONSORED_SENDER;
+
+        return _digest(op, VALID_UNTIL, VALID_AFTER);
+    }
+
     function _signedOp() internal view returns (PackedUserOperation memory op) {
         op.sender = SPONSORED_SENDER;
-        op.paymasterAndData = _paymasterAndData(abi.encodePacked(SIG_R, SIG_S, SIG_V));
+        op.paymasterAndData = _paymasterAndData(abi.encodePacked(SIG_R, SIG_S, SIG_V), VALID_UNTIL, VALID_AFTER);
     }
 
     function _tamperedOp() internal view returns (PackedUserOperation memory op) {
         op.sender = SPONSORED_SENDER;
         // Flip the low bit of s: still well-formed and low-s, but recovers a different signer.
-        op.paymasterAndData = _paymasterAndData(abi.encodePacked(SIG_R, bytes32(uint256(SIG_S) ^ 1), SIG_V));
+        op.paymasterAndData =
+            _paymasterAndData(abi.encodePacked(SIG_R, bytes32(uint256(SIG_S) ^ 1), SIG_V), VALID_UNTIL, VALID_AFTER);
     }
 
     function _unsignedOp() internal view returns (PackedUserOperation memory op) {
@@ -153,13 +197,43 @@ contract PaymasterEchidna {
             abi.encodePacked(address(paymaster), uint128(100_000), uint128(0), VALID_UNTIL, VALID_AFTER);
     }
 
-    function _paymasterAndData(bytes memory sig) internal view returns (bytes memory) {
+    /// @dev Builds a copy of the pinned operation with exactly one digest-bound field replaced.
+    ///      `differs` reports whether that changed the signed digest; when false the operation is
+    ///      the pinned one and would (correctly) still be sponsored, so the probe skips it.
+    function _mutatedOp(uint8 field, uint256 value)
+        internal
+        view
+        returns (PackedUserOperation memory op, bool differs)
+    {
+        op.sender = SPONSORED_SENDER;
+        uint48 validUntil = VALID_UNTIL;
+        uint48 validAfter = VALID_AFTER;
+
+        if (field == 0) op.sender = address(uint160(value));
+        else if (field == 1) op.nonce = value;
+        else if (field == 2) op.initCode = abi.encodePacked(value);
+        else if (field == 3) op.callData = abi.encodePacked(value);
+        else if (field == 4) op.accountGasLimits = bytes32(value);
+        else if (field == 5) op.preVerificationGas = value;
+        else if (field == 6) op.gasFees = bytes32(value);
+        else if (field == 7) validUntil = uint48(value);
+        else validAfter = uint48(value);
+
+        op.paymasterAndData = _paymasterAndData(abi.encodePacked(SIG_R, SIG_S, SIG_V), validUntil, validAfter);
+        differs = _digest(op, validUntil, validAfter) != _pinnedDigest();
+    }
+
+    function _paymasterAndData(bytes memory sig, uint48 validUntil, uint48 validAfter)
+        internal
+        view
+        returns (bytes memory)
+    {
         return abi.encodePacked(
             address(paymaster),
             uint128(100_000), // paymasterVerificationGasLimit
             uint128(0), // paymasterPostOpGasLimit
-            VALID_UNTIL,
-            VALID_AFTER,
+            validUntil,
+            validAfter,
             sig,
             uint16(sig.length),
             PAYMASTER_SIG_MAGIC

@@ -5,8 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {EntryPoint} from "account-abstraction/core/EntryPoint.sol";
 
-import {MozaikAccountFactory} from "../src/account/MozaikAccountFactory.sol";
-import {MozaikVerifyingPaymaster} from "../src/paymaster/MozaikVerifyingPaymaster.sol";
+import {MozaikAccountFactory} from "../../src/account/MozaikAccountFactory.sol";
+import {MozaikVerifyingPaymaster} from "../../src/paymaster/MozaikVerifyingPaymaster.sol";
 
 contract PaymasterHandler is Test {
     bytes8 internal constant PAYMASTER_SIG_MAGIC = 0x22e325a297439656;

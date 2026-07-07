@@ -10,6 +10,7 @@ e2e/.env.e2e
 
 # Fuzzing corpus and static analysis artifacts (all generated)
 echidna-corpus/
+echidna-corpus-*/
 crytic-export/
 
 # Deploy artifacts

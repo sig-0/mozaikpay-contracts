@@ -88,11 +88,11 @@ echidna-paymaster:
 
 .PHONY: echidna-account
 echidna-account:
-	echidna test/echidna/AccountEchidna.sol --contract AccountEchidna --config echidna.yaml
+	echidna test/echidna/AccountEchidna.sol --contract AccountEchidna --config echidna-account.yaml
 
 .PHONY: echidna-paylinks
 echidna-paylinks:
-	echidna test/echidna/PaylinksEchidna.sol --contract PaylinksEchidna --config echidna.yaml
+	echidna test/echidna/PaylinksEchidna.sol --contract PaylinksEchidna --config echidna-paylinks.yaml
 
 # Local node (Anvil)
 

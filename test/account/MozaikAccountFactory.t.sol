@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {BaseTest} from "./BaseTest.t.sol";
-import {MozaikAccount} from "../src/account/MozaikAccount.sol";
-import {MozaikAccountFactory} from "../src/account/MozaikAccountFactory.sol";
+import {BaseTest} from "../BaseTest.t.sol";
+import {MozaikAccount} from "../../src/account/MozaikAccount.sol";
+import {MozaikAccountFactory} from "../../src/account/MozaikAccountFactory.sol";
 
 contract MozaikAccountFactoryTest is BaseTest {
     address internal senderCreator;
