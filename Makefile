@@ -93,8 +93,9 @@ slither:
 # slither-mutate rewrites src/ in place and restores it after each mutant, so an
 # interrupted run can leave a mutant behind. To keep the working tree pristine no
 # matter how the run ends, the campaign executes inside a throwaway git worktree
-# checked out at HEAD; lib/ is symlinked from the main checkout (deps are never
-# mutated) and the report is written back to ./mutation_campaign.
+# checked out at HEAD, with its own private copy of lib/ (never the real one, so a
+# run can never write through to the vendored deps). The report is written back to
+# ./mutation_campaign.
 MUTATE_TEST_CMD ?= FOUNDRY_FUZZ_RUNS=1000 forge test --no-match-contract "UserOpFlow|Fork" --no-match-path "e2e/*"
 
 .PHONY: mutate
