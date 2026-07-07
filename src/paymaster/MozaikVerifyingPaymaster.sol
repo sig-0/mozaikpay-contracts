@@ -49,6 +49,12 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
     error ZeroAddress();
 
     /**
+     * @notice Thrown when renounceOwnership is called. Ownership renunciation is
+     *         permanently disabled.
+     */
+    error RenounceDisabled();
+
+    /**
      * @param _sponsor The initial sponsor signing address.
      * @dev The EntryPoint is fixed to the canonical v0.9 deployment, not configurable, so it
      *      cannot diverge from the account and factory EntryPoint.
@@ -69,6 +75,16 @@ contract MozaikVerifyingPaymaster is BasePaymaster {
         emit SponsorUpdated(sponsor, newSponsor);
 
         sponsor = newSponsor;
+    }
+
+    /**
+     * @notice Permanently disabled. Renouncing ownership would freeze sponsor
+     *         rotation and every deposit and stake withdrawal, locking funds and
+     *         removing the ability to replace a compromised sponsor key.
+     * @dev Overrides Ownable.renounceOwnership to always revert.
+     */
+    function renounceOwnership() public pure override {
+        revert RenounceDisabled();
     }
 
     /**

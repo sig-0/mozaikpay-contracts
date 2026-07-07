@@ -206,6 +206,22 @@ contract MozaikPaymasterTest is BaseTest {
         paymaster.setSponsor(address(0));
     }
 
+    function test_RenounceOwnership_Reverts() public {
+        vm.expectRevert(MozaikVerifyingPaymaster.RenounceDisabled.selector);
+
+        vm.prank(address(this)); // deployer / owner
+        paymaster.renounceOwnership();
+
+        assertEq(paymaster.owner(), address(this));
+    }
+
+    function test_RenounceOwnership_RevertsForNonOwner() public {
+        vm.expectRevert(MozaikVerifyingPaymaster.RenounceDisabled.selector);
+
+        vm.prank(attacker);
+        paymaster.renounceOwnership();
+    }
+
     function test_Constructor_RejectsZeroSponsor() public {
         vm.expectRevert(MozaikVerifyingPaymaster.ZeroAddress.selector);
         new MozaikVerifyingPaymaster(address(0));
