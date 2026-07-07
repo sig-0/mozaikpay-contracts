@@ -4,10 +4,14 @@ out = "out"
 libs = ["lib"]
 solc_version = "0.8.35"
 evm_version = "cancun"
+
+# Ignore compiler warnings from dependencies we do not control
+ignored_warnings_from = ["lib"]
 optimizer = true
 optimizer_runs = 200
+
 # Coverage: only report production code; exclude tests, scripts, and lib
-no_match_coverage = "(test|script|lib|e2e)"
+no_match_coverage = "(test|script|lib|e2e|mocks)"
 
 [profile.default.fuzz]
 runs = 10000

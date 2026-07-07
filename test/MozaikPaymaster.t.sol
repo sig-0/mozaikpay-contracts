@@ -206,6 +206,11 @@ contract MozaikPaymasterTest is BaseTest {
         paymaster.setSponsor(address(0));
     }
 
+    function test_Constructor_RejectsZeroSponsor() public {
+        vm.expectRevert(MozaikVerifyingPaymaster.ZeroAddress.selector);
+        new MozaikVerifyingPaymaster(address(0));
+    }
+
     function test_Deposit_IncreasedBalance() public {
         uint256 before = localEntryPoint.balanceOf(address(paymaster));
 

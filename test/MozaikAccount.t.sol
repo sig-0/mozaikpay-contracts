@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {SIG_VALIDATION_SUCCESS, SIG_VALIDATION_FAILED} from "account-abstraction/core/Helpers.sol";
 import {BaseAccount} from "account-abstraction/core/BaseAccount.sol";
@@ -312,5 +313,81 @@ contract MozaikAccountTest is BaseTest {
 
         assertEq(storedSpending, spendingSigner);
         assertEq(storedRecovery, recoverySigner);
+    }
+
+    function test_Initialize_RejectsZeroSigner() public {
+        // The factory pre-checks its inputs, so initialize's own guard is reached only by
+        // constructing a fresh proxy directly with bad init data.
+        vm.expectRevert(MozaikAccount.ZeroAddress.selector);
+        new ERC1967Proxy(address(accountImpl), abi.encodeCall(MozaikAccount.initialize, (address(0), recoverySigner)));
+    }
+
+    function test_Initialize_RejectsDuplicateSigners() public {
+        vm.expectRevert(MozaikAccount.DuplicateSigners.selector);
+        new ERC1967Proxy(
+            address(accountImpl), abi.encodeCall(MozaikAccount.initialize, (spendingSigner, spendingSigner))
+        );
+    }
+
+    function test_RotateSpendingSigner_RejectsZeroAddress() public {
+        vm.prank(recoverySigner);
+        vm.expectRevert(MozaikAccount.ZeroAddress.selector);
+        account.rotateSpendingSigner(address(0));
+    }
+
+    function test_RotateRecoverySigner_RejectsZeroAddress() public {
+        vm.prank(recoverySigner);
+        vm.expectRevert(MozaikAccount.ZeroAddress.selector);
+        account.rotateRecoverySigner(address(0));
+    }
+
+    function test_ValidateUserOp_RecoveryKeyInvalidSignature() public {
+        (, uint256 wrongKey) = makeAddrAndKey("wrongRecovery");
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.rotateSpendingSigner, (makeAddr("newKey"))));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
+        op = _signRecoveryUserOp(op, wrongKey);
+
+        vm.prank(ENTRY_POINT_V09);
+        uint256 result = account.validateUserOp(op, _userOpHash(op), 0);
+
+        // A recovery-type op with a valid rotation selector but a signature that does not recover
+        // the recovery signer is rejected during validation.
+        assertEq(result, SIG_VALIDATION_FAILED);
+    }
+
+    function test_ExecuteUserOp_InnerCallRevertBubbles() public {
+        // The account holds no USDC, so the inner transfer reverts inside the spending path and bubbles up.
+        bytes memory callData = _wrapExecuteUserOp(
+            abi.encodeCall(account.execute, (address(usdc), 0, abi.encodeCall(usdc.transfer, (attacker, 1))))
+        );
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
+        op = _signSpendingUserOp(op, spendingSignerKey);
+
+        vm.prank(ENTRY_POINT_V09);
+        vm.expectRevert();
+        account.executeUserOp(op, _userOpHash(op));
+    }
+
+    function test_ExecuteUserOp_RecoveryKeyUnsupportedSelectorReverts() public {
+        // A recovery-signed op whose inner selector is not a rotation or upgrade reaches executeUserOp
+        // only via a direct call (validation would otherwise reject it); it must revert.
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.execute, (address(usdc), 0, "")));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
+        op = _signRecoveryUserOp(op, recoverySignerKey);
+
+        vm.prank(ENTRY_POINT_V09);
+        vm.expectRevert(MozaikAccount.UnsupportedExecution.selector);
+        account.executeUserOp(op, _userOpHash(op));
+    }
+
+    function test_ExecuteUserOp_UnknownSigTypeReverts() public {
+        // A signature type that is neither spending (0x00) nor recovery (0x01) hits the fallthrough revert.
+        bytes memory callData = _wrapExecuteUserOp(abi.encodeCall(account.execute, (address(usdc), 0, "")));
+        PackedUserOperation memory op = _buildUserOp(address(account), callData);
+        op.signature = abi.encodePacked(uint8(0x02), bytes32(0), bytes32(0), uint8(27));
+
+        vm.prank(ENTRY_POINT_V09);
+        vm.expectRevert(MozaikAccount.UnsupportedExecution.selector);
+        account.executeUserOp(op, _userOpHash(op));
     }
 }
