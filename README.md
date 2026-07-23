@@ -41,7 +41,7 @@ Four contracts are deployed per environment:
 
 ## Environment Variables
 
-Create a `.env` file in `contracts/` (copy from `.env.example`):
+Create a `.env` file in the repo root (copy from `.env.example`):
 
 ```bash
 # RPC endpoints (used by foundry.toml rpc_endpoints)
@@ -95,8 +95,6 @@ The paylinks escrow (`MozaikPaylinks`) is deployed in the same step, bound to th
 canonical USDC. Export `USDC_ADDRESS` first only if you need to override that token.
 
 ```bash
-cd contracts
-
 # Dry-run first (no --broadcast)
 make deploy-sepolia
 
@@ -267,8 +265,8 @@ After deployment, record these values for the API and mobile configuration:
 
 ## Continuous Integration
 
-Every push to `main` and every pull request touching `contracts/**` runs these required checks (one workflow each under
-`.github/workflows/contracts-*.yaml`):
+Every push to `main` and every pull request runs these required checks (one workflow each under
+`.github/workflows/`):
 
 | Check    | Command                        | Gates                                                      |
 |----------|--------------------------------|------------------------------------------------------------|
@@ -279,7 +277,7 @@ Every push to `main` and every pull request touching `contracts/**` runs these r
 | Slither  | `make slither`                 | Static analysis; fails on new High-severity findings       |
 | Coverage | `make coverage-check`          | `src/` line coverage must stay at or above the floor (99%) |
 
-Mutation testing (`make mutate`) runs on a **weekly schedule and on demand only** (`contracts-mutation.yaml`), never as
+Mutation testing (`make mutate`) runs on a **weekly schedule and on demand only** (`mutation.yaml`), never as
 a PR gate. It reruns the suite once per generated mutant, so it is slow; surviving (uncaught) mutants are uploaded as an
 artifact for review rather than blocking merges. Because `slither-mutate` rewrites `src/` in place, `make mutate` runs the
 campaign inside a throwaway `git worktree` at HEAD, so an interrupted run can never leave a mutant in the working tree.

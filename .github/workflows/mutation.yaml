@@ -1,0 +1,45 @@
+name: Mutation
+
+# Informational only. Mutation testing reruns the whole test suite once per
+# generated mutant, so it runs on a weekly schedule and on demand, never as a
+# PR gate. Surviving (uncaught) mutants are uploaded as an artifact for review.
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  mutate:
+    name: slither-mutate
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Slither
+        run: pip install slither-analyzer==0.11.5
+
+      # Surviving mutants are expected and are not a build failure; the uploaded
+      # report is the signal to review.
+      - name: Run mutation campaign
+        continue-on-error: true
+        run: make mutate
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-campaign
+          path: mutation_campaign
+          if-no-files-found: warn

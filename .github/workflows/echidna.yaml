@@ -1,0 +1,80 @@
+name: Echidna
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  echidna:
+    name: echidna
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
+
+      # Pre-compile with build-info so echidna can use the artifacts directly.
+      # The echidna-action environment does not have forge available, so we must
+      # compile here and pass --ignore-compile to skip recompilation in the action.
+      - name: Compile contracts
+        run: forge build --build-info
+
+      # Persist each suite's corpus so coverage-guided runs build on prior exploration.
+      # Each cache is keyed on only its own harness and config, so editing one suite does not
+      # invalidate the others' corpora.
+      - name: Cache Echidna corpus - Account
+        uses: actions/cache@v6
+        with:
+          path: echidna-corpus-account
+          key: echidna-corpus-account-${{ hashFiles('test/echidna/AccountEchidna.sol', 'echidna-account.yaml') }}
+          restore-keys: echidna-corpus-account-
+
+      - name: Echidna - Account
+        uses: crytic/echidna-action@v2
+        with:
+          echidna-workdir: .
+          files: .
+          contract: AccountEchidna
+          config: echidna-account.yaml
+          crytic-args: --ignore-compile
+
+      - name: Cache Echidna corpus - Paymaster
+        uses: actions/cache@v6
+        with:
+          path: echidna-corpus-paymaster
+          key: echidna-corpus-paymaster-${{ hashFiles('test/echidna/PaymasterEchidna.sol', 'echidna-paymaster.yaml') }}
+          restore-keys: echidna-corpus-paymaster-
+
+      - name: Echidna - Paymaster
+        uses: crytic/echidna-action@v2
+        with:
+          echidna-workdir: .
+          files: .
+          contract: PaymasterEchidna
+          # Needs deployContracts to plant the EntryPoint at its canonical address
+          # before the paymaster harness deploys (BasePaymaster's constructor calls into it).
+          config: echidna-paymaster.yaml
+          crytic-args: --ignore-compile
+
+      - name: Cache Echidna corpus - Paylinks
+        uses: actions/cache@v6
+        with:
+          path: echidna-corpus-paylinks
+          key: echidna-corpus-paylinks-${{ hashFiles('test/echidna/PaylinksEchidna.sol', 'echidna-paylinks.yaml') }}
+          restore-keys: echidna-corpus-paylinks-
+
+      - name: Echidna - Paylinks
+        uses: crytic/echidna-action@v2
+        with:
+          echidna-workdir: .
+          files: .
+          contract: PaylinksEchidna
+          config: echidna-paylinks.yaml
+          crytic-args: --ignore-compile
