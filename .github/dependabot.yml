@@ -12,18 +12,3 @@ updates:
       actions:
         patterns:
           - "*"
-
-  # Maintain Foundry dependencies tracked as git submodules under lib/
-  - package-ecosystem: "gitsubmodule"
-    directory: "/"
-    schedule:
-      interval: weekly
-    labels:
-      - "dependencies"
-    groups:
-      submodules:
-        patterns:
-          - "*"
-    open-pull-requests-limit: 10
-    pull-request-branch-name:
-      separator: "-"
