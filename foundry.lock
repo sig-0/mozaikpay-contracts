@@ -2,6 +2,12 @@
   "lib/account-abstraction": {
     "rev": "1c6b669d0eea734e09a87e095ba15e076151718a"
   },
+  "lib/ens-contracts": {
+    "tag": {
+      "name": "v1.7.0",
+      "rev": "9b034936a42f462fc04bc0a929a419ede5e18d59"
+    }
+  },
   "lib/forge-std": {
     "rev": "0844d7e1fc5e60d77b68e469bff60265f236c398"
   },

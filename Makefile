@@ -34,8 +34,9 @@ remappings:
 test:
 	forge test --no-match-contract "UserOpFlow|Fork" --no-match-path "e2e/*"
 
-# Runs fork integration tests against Base Sepolia.
-# Uses BASE_SEPOLIA_RPC (defaults to https://sepolia.base.org).
+# Runs fork integration tests. Paylinks and account flows fork Base Sepolia
+# (BASE_SEPOLIA_RPC, defaults to https://sepolia.base.org); the ENS resolver forks
+# Ethereum mainnet (ETH_MAINNET_RPC) and is skipped when that variable is unset.
 .PHONY: test-fork
 test-fork:
 	forge test --match-contract "UserOpFlow|Fork"
@@ -164,6 +165,42 @@ deploy-mainnet:
 	forge script script/01_Deploy.s.sol \
 		--rpc-url base_mainnet \
 		$(EXTRA)
+
+# ENS L1 resolver (Ethereum L1, not Base)
+# Add --broadcast to send (dry-run by default).
+# Requires ENS_GATEWAY_URL, ENS_SIGNER_ADDRESSES, ENS_RESOLVER_OWNER,
+# ENS_ROOT_RESOLVER, and ENS_PARENT_NAME in the env. Add --verify to EXTRA
+# to verify on Etherscan in the same run. The owner can later change the
+# URL, the signers, and the root resolver without a redeploy.
+
+.PHONY: deploy-resolver-sepolia
+deploy-resolver-sepolia:
+	forge script script/04_DeployMozaikL1Resolver.s.sol \
+		--rpc-url sepolia \
+		$(EXTRA)
+
+.PHONY: deploy-resolver-mainnet
+deploy-resolver-mainnet:
+	forge script script/04_DeployMozaikL1Resolver.s.sol \
+		--rpc-url ethereum \
+		$(EXTRA)
+
+# Etherscan source verification for a resolver deployed without --verify.
+# Constructor args are read from the creation transaction. Requires RESOLVER.
+
+.PHONY: verify-resolver-sepolia
+verify-resolver-sepolia:
+	forge verify-contract $(RESOLVER) src/ens/MozaikL1Resolver.sol:MozaikL1Resolver \
+		--chain 11155111 \
+		--guess-constructor-args \
+		--watch
+
+.PHONY: verify-resolver-mainnet
+verify-resolver-mainnet:
+	forge verify-contract $(RESOLVER) src/ens/MozaikL1Resolver.sol:MozaikL1Resolver \
+		--chain 1 \
+		--guess-constructor-args \
+		--watch
 
 # Funding
 # Requires PAYMASTER_ADDRESS and DEPOSIT_AMOUNT_WEI in the env.
