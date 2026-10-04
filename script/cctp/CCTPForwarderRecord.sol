@@ -10,6 +10,16 @@ interface IMessageTransmitterV2 {
     function localDomain() external view returns (uint32);
 }
 
+/// @notice Subset of Circle's TokenMessengerV2 that the record checks read.
+interface ITokenMessengerV2Routes {
+    function remoteTokenMessengers(uint32 domain) external view returns (bytes32);
+}
+
+/// @notice Subset of Circle's TokenMinterV2 that the record checks read.
+interface ITokenMinterV2Limits {
+    function burnLimitsPerMessage(address token) external view returns (uint256);
+}
+
 /// @notice Reads a frozen CCTP forwarder record and deploys its init code through Nick's deployer.
 /// @dev A record holds the exact v1 init code for one environment. Every chain, fork and local node of that
 ///      environment deploys these bytes, so the implementation, the factory and every forwarder get the same
@@ -53,7 +63,8 @@ abstract contract CCTPForwarderRecord is CommonBase {
         record.goldenForwarder = vm.parseJsonAddress(json, ".golden.forwarder");
     }
 
-    /// @dev Checks Circle's CCTP V2 contracts on this chain against the record. Returns the local CCTP domain and USDC.
+    /// @dev Checks Circle's CCTP V2 contracts on this chain against the record, and off Base that USDC can burn to
+    ///      Base. Returns the local CCTP domain and USDC.
     function _checkCircle(ForwarderRecord memory record) internal view returns (uint32 domain, address usdc) {
         ITokenMessengerV2 messenger = ITokenMessengerV2(record.tokenMessenger);
         require(address(messenger).code.length > 0, "No TokenMessengerV2 on this chain");
@@ -66,6 +77,17 @@ abstract contract CCTPForwarderRecord is CommonBase {
             ? record.baseUsdc
             : messenger.localMinter().getLocalToken(BASE_DOMAIN, bytes32(uint256(uint160(record.baseUsdc))));
         require(usdc.code.length > 0, "No USDC for this chain");
+
+        if (onBase) return (domain, usdc);
+
+        require(
+            ITokenMessengerV2Routes(address(messenger)).remoteTokenMessengers(BASE_DOMAIN) != bytes32(0),
+            "No CCTP route to Base"
+        );
+        require(
+            ITokenMinterV2Limits(address(messenger.localMinter())).burnLimitsPerMessage(usdc) > 0,
+            "USDC burns are disabled on this chain"
+        );
     }
 
     /// @dev Deploys the recorded init code unless the recorded address already has code. Reverts if Nick's

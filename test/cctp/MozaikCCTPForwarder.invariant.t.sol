@@ -18,6 +18,7 @@ contract ForwarderHandler is Test {
     ERC20Mock public usdc;
     address public account;
     address public rescueTo;
+    uint256 public burnLimit;
 
     bool public onBase;
 
@@ -35,13 +36,15 @@ contract ForwarderHandler is Test {
         MozaikCCTPForwarder _implementation,
         MockMessageTransmitterV2 _transmitter,
         ERC20Mock _usdc,
-        address _account
+        address _account,
+        uint256 _burnLimit
     ) {
         forwarder = _forwarder;
         implementation = _implementation;
         transmitter = _transmitter;
         usdc = _usdc;
         account = _account;
+        burnLimit = _burnLimit;
         rescueTo = makeAddr("rescueTo");
     }
 
@@ -65,19 +68,20 @@ contract ForwarderHandler is Test {
         uint256 balance = usdc.balanceOf(address(forwarder));
         if (balance == 0) return;
 
-        amount = bound(amount, 1, balance);
+        amount = bound(amount, 1, balance * 2);
+        uint256 moved = amount < balance ? amount : balance;
         maxFee = maxFee % 2 == 0 ? 0 : bound(maxFee, 0, amount * 30 / 10_000);
         uint32 threshold = [uint32(1000), 2000, 0, uint32(thresholdSeed)][thresholdSeed % 4];
-        bool valid = onBase ? maxFee == 0 : (threshold == 1000 || threshold == 2000) && maxFee <= amount * 20 / 10_000;
+        bool valid = onBase ? maxFee == 0 : (threshold == 1000 || threshold == 2000) && moved <= burnLimit;
 
         _setChainId();
         vm.prank(caller);
         try forwarder.forward(amount, maxFee, threshold) {
             if (!valid) invalidCallSucceeded = true;
             if (onBase) {
-                transferred += amount;
+                transferred += moved;
             } else {
-                burned += amount;
+                burned += moved;
             }
         } catch {
             if (valid) validCallReverted = true;
@@ -165,8 +169,9 @@ contract MozaikCCTPForwarderInvariantTest is CCTPBaseTest {
         super.setUp();
         usdc = baseUsdc;
         minter.setLocalToken(BASE_DOMAIN, address(baseUsdc), address(baseUsdc));
+        minter.setMaxBurnAmountPerMessage(address(baseUsdc), BURN_LIMIT);
 
-        handler = new ForwarderHandler(forwarder, implementation, transmitter, usdc, account);
+        handler = new ForwarderHandler(forwarder, implementation, transmitter, usdc, account, BURN_LIMIT);
 
         targetContract(address(handler));
 

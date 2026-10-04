@@ -11,12 +11,19 @@ import {MozaikCCTPForwarderFactory} from "../../src/cctp/MozaikCCTPForwarderFact
 import {IMessageHandlerV2} from "../../src/cctp/IMessageHandlerV2.sol";
 import {ITokenMessengerV2} from "../../src/cctp/ITokenMessengerV2.sol";
 
-/// @notice TokenMinterV2 stand-in with settable token links. Burned tokens stay in this contract.
+/// @notice TokenMinterV2 stand-in with settable token links and burn limits. Burned tokens stay in this contract.
 contract MockTokenMinterV2 {
     mapping(uint32 => mapping(bytes32 => address)) internal _localTokens;
 
+    /// @dev Largest amount of a token one burn may move. Zero disables burns, as in Circle's minter.
+    mapping(address => uint256) public burnLimitsPerMessage;
+
     function setLocalToken(uint32 remoteDomain, address remoteToken, address localToken) external {
         _localTokens[remoteDomain][bytes32(uint256(uint160(remoteToken)))] = localToken;
+    }
+
+    function setMaxBurnAmountPerMessage(address localToken, uint256 burnLimitPerMessage) external {
+        burnLimitsPerMessage[localToken] = burnLimitPerMessage;
     }
 
     function getLocalToken(uint32 remoteDomain, bytes32 remoteToken) external view returns (address) {
@@ -25,7 +32,7 @@ contract MockTokenMinterV2 {
 }
 
 /// @notice MessageTransmitterV2 stand-in. deliver() routes a message to a recipient's handler the way
-///         receiveMessage does once the attestation checks pass.
+///         receiveMessage does once the attestation checks pass, and like it reverts unless the handler returns true.
 contract MockMessageTransmitterV2 {
     function deliver(
         address recipient,
@@ -34,13 +41,17 @@ contract MockMessageTransmitterV2 {
         uint32 finalityThresholdExecuted,
         bytes calldata messageBody
     ) external returns (bool) {
+        bool ok;
         if (finalityThresholdExecuted < 2000) {
-            return IMessageHandlerV2(recipient)
+            ok = IMessageHandlerV2(recipient)
                 .handleReceiveUnfinalizedMessage(sourceDomain, sender, finalityThresholdExecuted, messageBody);
+        } else {
+            ok = IMessageHandlerV2(recipient)
+                .handleReceiveFinalizedMessage(sourceDomain, sender, finalityThresholdExecuted, messageBody);
         }
+        require(ok, "Handler failed");
 
-        return IMessageHandlerV2(recipient)
-            .handleReceiveFinalizedMessage(sourceDomain, sender, finalityThresholdExecuted, messageBody);
+        return ok;
     }
 
     /// @notice Calls the finalized handler at any threshold, as a misrouting transmitter would.
@@ -51,13 +62,16 @@ contract MockMessageTransmitterV2 {
         uint32 finalityThresholdExecuted,
         bytes calldata messageBody
     ) external returns (bool) {
-        return IMessageHandlerV2(recipient)
+        bool ok = IMessageHandlerV2(recipient)
             .handleReceiveFinalizedMessage(sourceDomain, sender, finalityThresholdExecuted, messageBody);
+        require(ok, "Handler failed");
+
+        return ok;
     }
 }
 
-/// @notice TokenMessengerV2 stand-in. depositForBurn applies Circle's source-side argument checks, pulls the
-///         tokens into the local minter and records the call.
+/// @notice TokenMessengerV2 stand-in. depositForBurn applies Circle's source-side argument checks and the minter's
+///         burn limit, pulls the tokens into the local minter and records the call.
 contract MockTokenMessengerV2 {
     using SafeERC20 for IERC20;
 
@@ -94,6 +108,9 @@ contract MockTokenMessengerV2 {
         require(amount > 0, "Amount must be nonzero");
         require(mintRecipient != bytes32(0), "Mint recipient must be nonzero");
         require(maxFee < amount, "Max fee must be less than amount");
+        require(
+            amount <= MockTokenMinterV2(localMinter).burnLimitsPerMessage(burnToken), "Burn amount exceeds per tx limit"
+        );
 
         IERC20(burnToken).safeTransferFrom(msg.sender, localMinter, amount);
 
@@ -127,6 +144,9 @@ abstract contract CCTPBaseTest is Test {
     uint256 internal constant SOURCE_CHAIN_ID = 42161;
     uint32 internal constant BASE_DOMAIN = 6;
 
+    /// @dev Circle's per-message USDC burn limit (10M USDC).
+    uint256 internal constant BURN_LIMIT = 1e13;
+
     MockTokenMessengerV2 internal messenger;
     MockMessageTransmitterV2 internal transmitter;
     MockTokenMinterV2 internal minter;
@@ -151,6 +171,7 @@ abstract contract CCTPBaseTest is Test {
         minter = new MockTokenMinterV2();
         messenger = new MockTokenMessengerV2(address(transmitter), address(minter));
         minter.setLocalToken(BASE_DOMAIN, address(baseUsdc), address(usdc));
+        minter.setMaxBurnAmountPerMessage(address(usdc), BURN_LIMIT);
 
         implementation =
             new MozaikCCTPForwarder(ITokenMessengerV2(address(messenger)), address(baseUsdc), BASE_CHAIN_ID);

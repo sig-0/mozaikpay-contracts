@@ -50,8 +50,10 @@ contract MozaikCCTPForwarderForkTest is Test, CCTPForwarderRecord {
     address internal account;
     address internal forwarder;
 
+    /// @dev An empty RPC variable counts as unset.
     modifier onFork(string memory rpcVar, string memory publicRpc) {
-        vm.createSelectFork(vm.envOr(rpcVar, publicRpc));
+        string memory rpc = vm.envOr(rpcVar, string(""));
+        vm.createSelectFork(bytes(rpc).length == 0 ? publicRpc : rpc);
         _;
     }
 

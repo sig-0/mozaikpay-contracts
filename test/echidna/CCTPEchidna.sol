@@ -97,6 +97,7 @@ contract CCTPEchidna {
     address[SLOT_COUNT] internal forwarders;
     bool[SLOT_COUNT] internal deployed;
     bool internal linked;
+    uint256 internal burnLimit;
 
     uint256[ASSET_COUNT][SLOT_COUNT] internal funded;
     uint256[ASSET_COUNT][SLOT_COUNT] internal rescued;
@@ -120,6 +121,8 @@ contract CCTPEchidna {
         messenger = new MockTokenMessengerV2(address(transmitter), address(minter));
         minter.setLocalToken(BASE_DOMAIN, address(baseUsdc), address(localUsdc));
         linked = true;
+        burnLimit = type(uint256).max;
+        minter.setMaxBurnAmountPerMessage(address(localUsdc), burnLimit);
 
         ITokenMessengerV2 tokenMessenger = ITokenMessengerV2(address(messenger));
         implementations[BASE_MODE] = new MozaikCCTPForwarder(tokenMessenger, address(baseUsdc), block.chainid);
@@ -179,6 +182,20 @@ contract CCTPEchidna {
         minter.setLocalToken(BASE_DOMAIN, address(baseUsdc), isLinked ? address(localUsdc) : address(0));
     }
 
+    /// @notice Sets the minter's per-message burn limit for localUsdc: zero, unlimited, or within funding range.
+    function setBurnLimit(uint8 limitCase, uint256 anyLimit) external {
+        uint8 kind = limitCase % 3;
+        if (kind == 0) {
+            burnLimit = 0;
+        } else if (kind == 1) {
+            burnLimit = type(uint256).max;
+        } else {
+            burnLimit = anyLimit % (uint256(type(uint96).max) + 1);
+        }
+
+        minter.setMaxBurnAmountPerMessage(address(localUsdc), burnLimit);
+    }
+
     /// @notice Deploys a slot's forwarder from any caller. Deploying an existing one returns it.
     function deploy(uint8 slotSeed, address caller) external {
         uint256 slot = _slot(slotSeed);
@@ -197,10 +214,19 @@ contract CCTPEchidna {
         _check(false, ok, "deployForZeroAccount");
     }
 
+    /// @notice Predicts a forwarder for the zero account, which the factory must refuse.
+    function predictForZeroAccount(bool base) external {
+        bytes memory data = abi.encodeCall(MozaikCCTPForwarderFactory.predict, (address(0)));
+
+        (bool ok,) = address(factories[_mode(base)]).staticcall(data);
+        _check(false, ok, "predictForZeroAccount");
+    }
+
     /// @notice Deploys a slot's forwarder if needed and forwards from it, from any caller.
     function deployAndForward(uint8 slotSeed, address caller, ForwardInput calldata input) external {
         uint256 slot = _slot(slotSeed);
         ForwardArgs memory args = _forwardArgs(slot, input);
+        uint256 moved = _moved(slot, args);
         bool valid = _expectForward(slot, args);
         bytes memory data = abi.encodeCall(
             MozaikCCTPForwarderFactory.deployAndForward, (_account(slot), args.amount, args.maxFee, args.threshold)
@@ -211,7 +237,7 @@ contract CCTPEchidna {
         if (!ok) return;
 
         _recordDeploy(slot, abi.decode(returned, (address)));
-        _recordForward(slot, args.amount);
+        _recordForward(slot, moved);
     }
 
     /// @notice Calls deployAndForward for the zero account, which the factory must refuse.
@@ -231,12 +257,13 @@ contract CCTPEchidna {
         if (!deployed[slot]) return;
 
         ForwardArgs memory args = _forwardArgs(slot, input);
+        uint256 moved = _moved(slot, args);
         bool valid = _expectForward(slot, args);
         bytes memory data = abi.encodeCall(MozaikCCTPForwarder.forward, (args.amount, args.maxFee, args.threshold));
 
         (bool ok,) = _callAs(caller, forwarders[slot], data);
         _check(valid, ok, "forward");
-        if (ok) _recordForward(slot, args.amount);
+        if (ok) _recordForward(slot, moved);
     }
 
     /// @notice Calls rescue on a deployed forwarder from the account, the other account, the harness or anyone.
@@ -458,19 +485,25 @@ contract CCTPEchidna {
         });
     }
 
-    /// @dev forward moves part of the forwarder's forward token. On Base it takes no fee.
+    /// @dev forward needs something to move. On Base it takes no fee.
     function _expectForward(uint256 slot, ForwardArgs memory args) internal view returns (bool) {
-        uint256 balance = _balance(_forwardAsset(_slotMode(slot)), forwarders[slot]);
-        if (args.amount == 0 || args.amount > balance) return false;
+        if (_moved(slot, args) == 0) return false;
 
-        return _onBase(slot) ? args.maxFee == 0 : _burnAllowed(args);
+        return _onBase(slot) ? args.maxFee == 0 : _burnAllowed(slot, args);
     }
 
-    /// @dev A burn needs a CCTP threshold, a fee within the cap and below the amount, and the token link.
-    function _burnAllowed(ForwardArgs memory args) internal view returns (bool) {
+    /// @dev A burn needs a CCTP threshold, the token link and an amount within the burn limit.
+    function _burnAllowed(uint256 slot, ForwardArgs memory args) internal view returns (bool) {
         bool knownThreshold = args.threshold == FINALITY_FAST || args.threshold == FINALITY_STANDARD;
 
-        return knownThreshold && args.maxFee <= _feeCap(args.amount) && args.maxFee < args.amount && linked;
+        return knownThreshold && linked && _moved(slot, args) <= burnLimit;
+    }
+
+    /// @dev The lesser of the amount and the forwarder's balance of its forward token.
+    function _moved(uint256 slot, ForwardArgs memory args) internal view returns (uint256) {
+        uint256 balance = _balance(_forwardAsset(_slotMode(slot)), forwarders[slot]);
+
+        return args.amount < balance ? args.amount : balance;
     }
 
     /// @dev Only the account can rescue, only on Base, and only what the forwarder holds.

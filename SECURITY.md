@@ -89,7 +89,8 @@ Examples of in-scope issues:
 The security-supported code is:
 
 - The **`main`** branch of this repository, and
-- The contracts **currently deployed** on Base Mainnet at the canonical addresses in our deployment records.
+- The contracts **currently deployed** on mainnet chains (Base, Ethereum and the CCTP deposit chains) at the canonical
+  addresses in our deployment records.
 
 `MozaikPaylinks` is non-upgradeable and immutable once deployed; a fix there means deploying a new instance and
 migrating. `MozaikCCTPForwarder` and its factory are immutable per version; a fix ships as a new version at new

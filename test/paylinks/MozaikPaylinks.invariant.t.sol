@@ -134,8 +134,9 @@ contract LinksHandler is Test {
 
         address claimSigner = _signers[bound(idIndex, 0, _signers.length - 1)];
 
-        // Constrain claimer away from common reserved/precompile addresses.
+        // Constrain claimer away from common reserved/precompile addresses and the escrow itself.
         claimer = address(uint160(bound(uint256(uint160(claimer)), 100, type(uint160).max - 1)));
+        if (claimer == address(links)) return;
         address signedFor = wrongRecipient ? address(uint160(claimer) + 1) : claimer;
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(_privKey[claimSigner], _claimDigest(claimSigner, signedFor));

@@ -13,13 +13,13 @@ import {CCTPForwarderRecord} from "../../script/cctp/CCTPForwarderRecord.sol";
 contract MozaikCCTPForwarderGoldenTest is Test, CCTPForwarderRecord {
     address internal constant GOLDEN_ACCOUNT = 0x287B02E09a220f911f5BbAaA3F1c9D170C1B9a08;
 
-    address internal constant MAINNET_IMPLEMENTATION = 0x96A750CDE9C840bb47bc9D31844747c96eb78793;
-    address internal constant MAINNET_FACTORY = 0xa5B1963D744E160EaC7C02C95e8C797B76Bc551a;
-    address internal constant MAINNET_GOLDEN_FORWARDER = 0xd60bD0f86a55D4f716082960fd9973F9D92F1b1f;
+    address internal constant MAINNET_IMPLEMENTATION = 0x47bF36BF0968Ff65178545CcDf5470CCD8233531;
+    address internal constant MAINNET_FACTORY = 0x67D285Fe4A17e0EB12068827baf5B057ED1FFb9C;
+    address internal constant MAINNET_GOLDEN_FORWARDER = 0xe5c0670D4fEDeEbBA076079996392536E8D1C376;
 
-    address internal constant SEPOLIA_IMPLEMENTATION = 0x8c28726fa4C8F3ad347D677C785fE1ECD8103d4E;
-    address internal constant SEPOLIA_FACTORY = 0x84559FB3CC966663586Faa85af090dEaD4Ebc440;
-    address internal constant SEPOLIA_GOLDEN_FORWARDER = 0x0206049E6f71279a94F22ab6C401A935e9a630A4;
+    address internal constant SEPOLIA_IMPLEMENTATION = 0xc6742f4A73acA2b2Ed302cA2401caAc8e11CeFD7;
+    address internal constant SEPOLIA_FACTORY = 0xfff41108126D9cAa62f1b2Eccd91aC860A8Df5a3;
+    address internal constant SEPOLIA_GOLDEN_FORWARDER = 0xeEEfEca0E16769478b25dd488aE836AbcbB65365;
 
     ForwarderRecord internal mainnet;
     ForwarderRecord internal sepolia;
@@ -70,28 +70,54 @@ contract MozaikCCTPForwarderGoldenTest is Test, CCTPForwarderRecord {
     }
 
     function _assertMatchesBuild(ForwarderRecord memory record) internal pure {
-        assertEq(
+        _assertSameCode(
             record.implementation.initCode,
-            abi.encodePacked(
-                type(MozaikCCTPForwarder).creationCode,
-                abi.encode(record.tokenMessenger, record.baseUsdc, record.baseChainId)
-            ),
+            type(MozaikCCTPForwarder).creationCode,
+            abi.encode(record.tokenMessenger, record.baseUsdc, record.baseChainId),
             "implementation"
         );
-        assertEq(
+        _assertSameCode(
             record.factory.initCode,
-            abi.encodePacked(type(MozaikCCTPForwarderFactory).creationCode, abi.encode(record.implementation.addr)),
+            type(MozaikCCTPForwarderFactory).creationCode,
+            abi.encode(record.implementation.addr),
             "factory"
         );
     }
 
+    /// @dev Ignores the compiler metadata, which changes with comments and remappings but not with behavior.
+    function _assertSameCode(bytes memory initCode, bytes memory creationCode, bytes memory args, string memory name)
+        internal
+        pure
+    {
+        uint256 codeLength = initCode.length - args.length;
+
+        assertEq(_slice(initCode, codeLength, initCode.length), args, string.concat(name, " constructor arguments"));
+        assertEq(_withoutMetadata(_slice(initCode, 0, codeLength)), _withoutMetadata(creationCode), name);
+    }
+
+    /// @dev Drops the CBOR metadata, whose length is in the last two bytes.
+    function _withoutMetadata(bytes memory code) internal pure returns (bytes memory) {
+        uint256 metadataLength = (uint256(uint8(code[code.length - 2])) << 8) | uint8(code[code.length - 1]);
+
+        return _slice(code, 0, code.length - metadataLength - 2);
+    }
+
+    function _slice(bytes memory data, uint256 start, uint256 end) internal pure returns (bytes memory out) {
+        out = new bytes(end - start);
+        for (uint256 i = start; i < end; i++) {
+            out[i - start] = data[i];
+        }
+    }
+
     function _assertDeploys(ForwarderRecord memory record) internal {
         assertEq(
-            vm.computeCreate2Address(bytes32(0), keccak256(record.implementation.initCode), CREATE2_DEPLOYER),
+            vm.computeCreate2Address(
+                record.implementation.salt, keccak256(record.implementation.initCode), CREATE2_DEPLOYER
+            ),
             record.implementation.addr
         );
         assertEq(
-            vm.computeCreate2Address(bytes32(0), keccak256(record.factory.initCode), CREATE2_DEPLOYER),
+            vm.computeCreate2Address(record.factory.salt, keccak256(record.factory.initCode), CREATE2_DEPLOYER),
             record.factory.addr
         );
 

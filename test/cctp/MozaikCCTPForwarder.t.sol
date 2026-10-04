@@ -98,24 +98,33 @@ contract MozaikCCTPForwarderTest is CCTPBaseTest {
     function test_Forward_SourceIgnoresBaseUsdc() public {
         baseUsdc.mint(address(forwarder), AMOUNT);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(IERC20Errors.ERC20InsufficientBalance.selector, address(forwarder), 0, AMOUNT)
-        );
+        vm.expectRevert(MozaikCCTPForwarder.InvalidInput.selector);
         forwarder.forward(AMOUNT, 0, 2000);
 
         assertEq(baseUsdc.balanceOf(address(forwarder)), AMOUNT);
     }
 
     function test_Forward_InvalidZeroAmount() public {
+        usdc.mint(address(forwarder), AMOUNT);
+
         vm.expectRevert(MozaikCCTPForwarder.InvalidInput.selector);
         forwarder.forward(0, 0, 2000);
     }
 
-    function test_Forward_InvalidFeeAboveCap() public {
+    function test_Forward_InvalidEmptyBalance() public {
+        vm.expectRevert(MozaikCCTPForwarder.InvalidInput.selector);
+        forwarder.forward(AMOUNT, 0, 2000);
+    }
+
+    function test_Forward_FeeAboveCapIsLowered() public {
         usdc.mint(address(forwarder), AMOUNT);
 
-        vm.expectRevert(MozaikCCTPForwarder.InvalidInput.selector);
-        forwarder.forward(AMOUNT, FEE_CAP + 1, 1000);
+        vm.expectEmit(true, true, true, true, address(forwarder));
+        emit MozaikCCTPForwarder.Forwarded(AMOUNT, FEE_CAP, 1000);
+
+        forwarder.forward(AMOUNT, type(uint256).max, 1000);
+
+        _assertBurn(AMOUNT, FEE_CAP, 1000);
     }
 
     function test_Forward_ValidStandardAtFeeCap() public {
@@ -126,11 +135,12 @@ contract MozaikCCTPForwarderTest is CCTPBaseTest {
         _assertBurn(AMOUNT, FEE_CAP, 2000);
     }
 
-    function test_Forward_InvalidStandardFeeAboveCap() public {
+    function test_Forward_StandardFeeAboveCapIsLowered() public {
         usdc.mint(address(forwarder), AMOUNT);
 
-        vm.expectRevert(MozaikCCTPForwarder.InvalidInput.selector);
         forwarder.forward(AMOUNT, FEE_CAP + 1, 2000);
+
+        _assertBurn(AMOUNT, FEE_CAP, 2000);
     }
 
     function test_Forward_InvalidThresholds() public {
@@ -143,15 +153,52 @@ contract MozaikCCTPForwarderTest is CCTPBaseTest {
         }
     }
 
-    function test_Forward_InvalidInsufficientBalance() public {
+    function test_Forward_AboveBalanceMovesBalance() public {
         usdc.mint(address(forwarder), AMOUNT - 1);
+        uint256 feeCap = (AMOUNT - 1) * 20 / 10_000;
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IERC20Errors.ERC20InsufficientBalance.selector, address(forwarder), AMOUNT - 1, AMOUNT
-            )
-        );
-        forwarder.forward(AMOUNT, 0, 2000);
+        vm.expectEmit(true, true, true, true, address(forwarder));
+        emit MozaikCCTPForwarder.Forwarded(AMOUNT - 1, feeCap, 2000);
+
+        forwarder.forward(AMOUNT, FEE_CAP, 2000);
+
+        _assertBurn(AMOUNT - 1, feeCap, 2000);
+    }
+
+    /// @dev A dust forward that lands first leaves the relayer's forward of the full deposit to move the rest.
+    function test_Forward_EarlierForwardDoesNotBlockLaterOne() public {
+        usdc.mint(address(forwarder), AMOUNT);
+
+        vm.prank(makeAddr("anyone"));
+        forwarder.forward(1, 0, 2000);
+
+        forwarder.forward(AMOUNT, FEE_CAP, 1000);
+
+        assertEq(messenger.burnCount(), 2, "burn count");
+        MockTokenMessengerV2.Burn memory burn = messenger.burnAt(1);
+        assertEq(burn.amount, AMOUNT - 1, "amount");
+        assertEq(burn.maxFee, (AMOUNT - 1) * 20 / 10_000, "max fee");
+        assertEq(usdc.balanceOf(address(forwarder)), 0, "forwarder balance");
+        assertEq(usdc.balanceOf(address(minter)), AMOUNT, "burned amount");
+    }
+
+    function test_Forward_ValidAtBurnLimit() public {
+        usdc.mint(address(forwarder), BURN_LIMIT);
+
+        forwarder.forward(BURN_LIMIT, 0, 2000);
+
+        _assertBurn(BURN_LIMIT, 0, 2000);
+    }
+
+    function test_Forward_InvalidAboveBurnLimit() public {
+        usdc.mint(address(forwarder), BURN_LIMIT + 1);
+
+        vm.expectRevert("Burn amount exceeds per tx limit");
+        forwarder.forward(BURN_LIMIT + 1, 0, 2000);
+
+        forwarder.forward(BURN_LIMIT, 0, 2000);
+
+        assertEq(usdc.balanceOf(address(forwarder)), 1);
     }
 
     function test_Forward_InvalidUnlinkedUsdc() public {
@@ -175,6 +222,23 @@ contract MozaikCCTPForwarderTest is CCTPBaseTest {
         assertEq(baseUsdc.balanceOf(account), AMOUNT, "account balance");
         assertEq(baseUsdc.balanceOf(address(forwarder)), 0, "forwarder balance");
         assertEq(messenger.burnCount(), 0, "no burn on Base");
+    }
+
+    function test_Forward_BaseAboveBalanceMovesBalance() public {
+        vm.chainId(BASE_CHAIN_ID);
+        baseUsdc.mint(address(forwarder), AMOUNT);
+
+        forwarder.forward(type(uint256).max, 0, 0);
+
+        assertEq(baseUsdc.balanceOf(account), AMOUNT);
+        assertEq(baseUsdc.balanceOf(address(forwarder)), 0);
+    }
+
+    function test_Forward_BaseInvalidEmptyBalance() public {
+        vm.chainId(BASE_CHAIN_ID);
+
+        vm.expectRevert(MozaikCCTPForwarder.InvalidInput.selector);
+        forwarder.forward(AMOUNT, 0, 0);
     }
 
     function test_Forward_BaseIgnoresThreshold() public {
@@ -462,25 +526,36 @@ contract MozaikCCTPForwarderTest is CCTPBaseTest {
     }
 
     function testFuzz_Forward_FeeBound(uint256 amount, uint256 maxFee, bool standard) public {
-        amount = bound(amount, 1, 1e18);
-        maxFee = bound(maxFee, 0, amount);
+        amount = bound(amount, 1, BURN_LIMIT);
         uint32 threshold = standard ? 2000 : 1000;
+        uint256 feeCap = amount * 20 / 10_000;
         usdc.mint(address(forwarder), amount);
-
-        if (maxFee * 10_000 > amount * 20) {
-            vm.expectRevert(MozaikCCTPForwarder.InvalidInput.selector);
-            forwarder.forward(amount, maxFee, threshold);
-
-            return;
-        }
 
         forwarder.forward(amount, maxFee, threshold);
 
-        _assertBurn(amount, maxFee, threshold);
+        _assertBurn(amount, maxFee < feeCap ? maxFee : feeCap, threshold);
+    }
+
+    function testFuzz_Forward_MovesAtMostBalance(uint256 balance, uint256 amount, bool base) public {
+        balance = bound(balance, 1, BURN_LIMIT);
+        amount = bound(amount, 1, type(uint256).max);
+        uint256 moved = amount < balance ? amount : balance;
+        if (base) vm.chainId(BASE_CHAIN_ID);
+        (base ? baseUsdc : usdc).mint(address(forwarder), balance);
+
+        forwarder.forward(amount, 0, 2000);
+
+        if (base) {
+            assertEq(baseUsdc.balanceOf(account), moved);
+            assertEq(baseUsdc.balanceOf(address(forwarder)), balance - moved);
+        } else {
+            assertEq(messenger.burnAt(0).amount, moved);
+            assertEq(usdc.balanceOf(address(forwarder)), balance - moved);
+        }
     }
 
     function testFuzz_Forward_AnyCallerAnyAmountReachesAccount(address caller, uint256 amount, bool base) public {
-        amount = bound(amount, 1, 1e18);
+        amount = bound(amount, 1, BURN_LIMIT);
         if (base) vm.chainId(BASE_CHAIN_ID);
         (base ? baseUsdc : usdc).mint(address(forwarder), amount);
 

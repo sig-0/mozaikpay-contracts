@@ -45,10 +45,13 @@ contract MozaikCCTPForwarderFactory {
 
     /**
      * @notice Computes the address of the account's forwarder, deployed or not.
+     * @dev Reverts for the zero account, whose forwarder can never be deployed.
      * @param account The account the forwarder serves.
      * @return The address where the forwarder is (or will be) deployed.
      */
     function predict(address account) public view returns (address) {
+        if (account == address(0)) revert ZeroAddress();
+
         return Clones.predictDeterministicAddressWithImmutableArgs(
             address(FORWARDER_IMPLEMENTATION), abi.encodePacked(account), bytes32(0)
         );
@@ -60,8 +63,6 @@ contract MozaikCCTPForwarderFactory {
      * @return forwarder The deployed (or pre-existing) forwarder.
      */
     function deploy(address account) public returns (address forwarder) {
-        if (account == address(0)) revert ZeroAddress();
-
         forwarder = predict(account);
         if (forwarder.code.length > 0) return forwarder;
 
@@ -75,7 +76,7 @@ contract MozaikCCTPForwarderFactory {
     /**
      * @notice Deploys the account's forwarder if needed, then calls its forward().
      * @param account              The account the forwarder serves.
-     * @param amount               USDC amount in token-minor units.
+     * @param amount               Most USDC to move, in token-minor units. See MozaikCCTPForwarder.forward.
      * @param maxFee               Maximum CCTP fee. See MozaikCCTPForwarder.forward.
      * @param minFinalityThreshold CCTP finality threshold. See MozaikCCTPForwarder.forward.
      * @return forwarder The forwarder.

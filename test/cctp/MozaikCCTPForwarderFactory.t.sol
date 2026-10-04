@@ -52,6 +52,11 @@ contract MozaikCCTPForwarderFactoryTest is CCTPBaseTest {
         assertEq(vm.getRecordedLogs().length, 0, "no event on repeat deploy");
     }
 
+    function test_Predict_InvalidZeroAccount() public {
+        vm.expectRevert(MozaikCCTPForwarderFactory.ZeroAddress.selector);
+        factory.predict(address(0));
+    }
+
     function test_Deploy_InvalidZeroAccount() public {
         vm.expectRevert(MozaikCCTPForwarderFactory.ZeroAddress.selector);
         factory.deploy(address(0));

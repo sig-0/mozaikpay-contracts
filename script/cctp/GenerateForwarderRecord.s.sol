@@ -9,20 +9,23 @@ import {CCTPForwarderRecord} from "./CCTPForwarderRecord.sol";
 
 /// @notice Rebuilds the record at CCTP_FORWARDER_RECORD from the current source. Only for a version that is not
 ///         deployed yet, because any source change moves every address.
-/// @dev Keeps the record's config and golden account, and rewrites every field derived from the source.
+/// @dev Keeps the record's config, salts and golden account, and rewrites every field derived from the source.
 contract GenerateForwarderRecordScript is Script, CCTPForwarderRecord {
     function run() external {
         string memory path = vm.envString("CCTP_FORWARDER_RECORD");
         ForwarderRecord memory record = _readForwarderRecord(path);
 
         Deployment memory implementation = _build(
+            record.implementation.salt,
             abi.encodePacked(
                 type(MozaikCCTPForwarder).creationCode,
                 abi.encode(record.tokenMessenger, record.baseUsdc, record.baseChainId)
             )
         );
-        Deployment memory factory =
-            _build(abi.encodePacked(type(MozaikCCTPForwarderFactory).creationCode, abi.encode(implementation.addr)));
+        Deployment memory factory = _build(
+            record.factory.salt,
+            abi.encodePacked(type(MozaikCCTPForwarderFactory).creationCode, abi.encode(implementation.addr))
+        );
         address goldenForwarder = MozaikCCTPForwarderFactory(factory.addr).predict(record.goldenAccount);
 
         _writeDeployment(path, ".implementation", implementation);
@@ -35,10 +38,11 @@ contract GenerateForwarderRecordScript is Script, CCTPForwarderRecord {
         console.log("Golden forward: ", goldenForwarder);
     }
 
-    /// @dev Deploys `initCode` and returns its record fields.
-    function _build(bytes memory initCode) internal returns (Deployment memory deployment) {
+    /// @dev Deploys `initCode` with `salt` and returns its record fields.
+    function _build(bytes32 salt, bytes memory initCode) internal returns (Deployment memory deployment) {
+        deployment.salt = salt;
         deployment.initCode = initCode;
-        deployment.addr = vm.computeCreate2Address(bytes32(0), keccak256(initCode), CREATE2_DEPLOYER);
+        deployment.addr = vm.computeCreate2Address(salt, keccak256(initCode), CREATE2_DEPLOYER);
 
         require(_deployRecorded(deployment), "Already deployed on the local EVM");
         deployment.codeHash = deployment.addr.codehash;

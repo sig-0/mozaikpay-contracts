@@ -125,31 +125,35 @@ contract MozaikCCTPForwarder is IMessageHandlerV2 {
     }
 
     /**
-     * @notice Moves `amount` of USDC toward the account. Callable by anyone.
-     * @dev On Base, transfers the USDC to the account and requires `maxFee` to be zero. On any other chain,
-     *      burns it through CCTP V2 with the account as mint recipient on Base, no destination caller and no
-     *      hook. The threshold must be 1000 (Fast) or 2000 (Standard), and `maxFee` can never exceed MAX_FEE_BPS of
-     *      `amount`.
-     * @param amount               USDC amount in token-minor units.
+     * @notice Moves up to `amount` of USDC toward the account. Callable by anyone.
+     * @dev Moves the lesser of `amount` and the balance, so an earlier forward cannot make this one revert. On
+     *      Base, transfers the USDC to the account and requires `maxFee` to be zero. On any other chain, burns it
+     *      through CCTP V2 with the account as mint recipient on Base, no destination caller and no hook. The
+     *      threshold must be 1000 (Fast) or 2000 (Standard), and `maxFee` is lowered to MAX_FEE_BPS of the moved
+     *      amount when above it.
+     * @param amount               Most USDC to move, in token-minor units.
      * @param maxFee               Maximum CCTP fee, deducted from the mint on Base.
      * @param minFinalityThreshold CCTP finality threshold. Ignored on Base.
      */
     function forward(uint256 amount, uint256 maxFee, uint32 minFinalityThreshold) external {
         address acct = _account();
-        if (amount == 0) revert InvalidInput();
 
         if (block.chainid == BASE_CHAIN_ID) {
             if (maxFee != 0) revert InvalidInput();
 
+            amount = _available(BASE_USDC, amount);
             IERC20(BASE_USDC).safeTransfer(acct, amount);
         } else {
             if (minFinalityThreshold != FINALITY_FAST && minFinalityThreshold != FINALITY_STANDARD) {
                 revert InvalidInput();
             }
-            if (maxFee > amount * MAX_FEE_BPS / 10_000) revert InvalidInput();
 
             address usdc = TOKEN_MESSENGER.localMinter().getLocalToken(BASE_DOMAIN, _toBytes32(BASE_USDC));
             if (usdc == address(0)) revert UnsupportedChain();
+
+            amount = _available(usdc, amount);
+            uint256 feeCap = amount * MAX_FEE_BPS / 10_000;
+            if (maxFee > feeCap) maxFee = feeCap;
 
             IERC20(usdc).forceApprove(address(TOKEN_MESSENGER), amount);
             TOKEN_MESSENGER.depositForBurn(
@@ -181,7 +185,8 @@ contract MozaikCCTPForwarder is IMessageHandlerV2 {
      * @dev Callable only by the local MessageTransmitterV2. The message must come from the account on domain 6
      *      (Base), be attested at the finalized threshold or above, and carry abi.encode(address token, address to,
      *      uint256 amount, uint256 deadline). It reverts after `deadline`, a timestamp in seconds, so a message
-     *      whose delivery failed cannot be replayed later. Sends the native coin when `token` is the zero address.
+     *      whose delivery failed cannot be replayed later. Until then, anyone can relay it again. Sends the native
+     *      coin when `token` is the zero address.
      * @param sourceDomain              CCTP domain of the chain that sent the message.
      * @param sender                    Sender of the message on the source chain, left-padded to 32 bytes.
      * @param finalityThresholdExecuted The finality threshold at which the message was attested.
@@ -229,6 +234,17 @@ contract MozaikCCTPForwarder is IMessageHandlerV2 {
         if (address(this) == SELF) revert NotClone();
 
         return address(bytes20(Clones.fetchCloneArgs(address(this))));
+    }
+
+    /**
+     * @dev The lesser of `amount` and this forwarder's balance of `token`. Reverts when that is zero.
+     */
+    function _available(address token, uint256 amount) private view returns (uint256) {
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (amount > balance) amount = balance;
+        if (amount == 0) revert InvalidInput();
+
+        return amount;
     }
 
     /**

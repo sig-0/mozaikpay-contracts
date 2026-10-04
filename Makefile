@@ -48,8 +48,7 @@ test-fork:
 test-invariant:
 	forge test --match-contract "Invariant"
 
-# Runs the full testing suite.
-# RPC-required tests are skipped unless the env is set
+# Runs the full testing suite, including the fork tests (see test-fork).
 .PHONY: test-all
 test-all:
 	forge test --no-match-path "e2e/*"
@@ -70,7 +69,7 @@ COVERAGE_MIN ?= 99
 
 .PHONY: coverage
 coverage:
-	forge coverage --no-match-test "Fork\|fork" --no-match-path "e2e/*" --report summary --report lcov
+	forge coverage --no-match-test "Fork|fork" --no-match-path "e2e/*" --report summary --report lcov
 
 # Regenerates coverage and fails if src/ line coverage drops below COVERAGE_MIN.
 # lcov.info holds only src/ files (no_match_coverage excludes test/script/lib/e2e/mocks).
@@ -80,7 +79,7 @@ coverage-check: coverage
 
 .PHONY: snapshot
 snapshot:
-	forge snapshot --no-match-test "Fork\|fork" --no-match-path "e2e/*"
+	forge snapshot --no-match-test "Fork|fork" --no-match-path "e2e/*"
 
 # Static analysis
 
