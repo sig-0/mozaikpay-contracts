@@ -37,6 +37,8 @@ test:
 # Runs fork integration tests. Paylinks and account flows fork Base Sepolia
 # (BASE_SEPOLIA_RPC, defaults to https://sepolia.base.org); the ENS resolver forks
 # Ethereum mainnet (ETH_MAINNET_RPC) and is skipped when that variable is unset.
+# The CCTP forwarder forks Ethereum, Arbitrum, Polygon, Base and Base Sepolia, through
+# public RPCs unless ETH_MAINNET_RPC, ARBITRUM_MAINNET_RPC or POLYGON_MAINNET_RPC is set.
 .PHONY: test-fork
 test-fork:
 	forge test --match-contract "UserOpFlow|Fork"
@@ -96,8 +98,10 @@ slither:
 # matter how the run ends, the campaign executes inside a throwaway git worktree
 # checked out at HEAD, with its own private copy of lib/ (never the real one, so a
 # run can never write through to the vendored deps). The report is written back to
-# ./mutation_campaign.
-MUTATE_TEST_CMD ?= FOUNDRY_FUZZ_RUNS=1000 forge test --no-match-contract "UserOpFlow|Fork" --no-match-path "e2e/*"
+# ./mutation_campaign, which each run replaces. Uncommitted changes are not mutated.
+# The golden test compares src/cctp with its frozen bytecode records, so it would kill every CCTP
+# mutant on its own; it is excluded here.
+MUTATE_TEST_CMD ?= FOUNDRY_FUZZ_RUNS=1000 forge test --no-match-contract "UserOpFlow|Fork|Golden" --no-match-path "e2e/*"
 
 .PHONY: mutate
 mutate:
@@ -105,19 +109,21 @@ mutate:
 	root="$$(pwd)"; \
 	tmp="$$(mktemp -d)"; \
 	wt="$$tmp/wt"; \
-	trap 'git worktree remove --force "$$wt" >/dev/null 2>&1; rm -rf "$$tmp"; git worktree prune' EXIT INT TERM; \
+	trap 'cd "$$root"; git worktree remove --force "$$wt" >/dev/null 2>&1; rm -rf "$$tmp"; git worktree prune' EXIT; \
+	trap 'exit 130' INT; \
+	trap 'exit 143' TERM; \
 	git worktree add --detach --quiet "$$wt" HEAD; \
-	rm -rf "$$wt/contracts/lib"; \
-	ln -s "$$root/lib" "$$wt/contracts/lib"; \
+	rm -rf "$$wt/lib"; \
+	cp -R "$$root/lib" "$$wt/lib"; \
 	rm -rf "$$root/mutation_campaign"; \
-	cd "$$wt/contracts"; \
+	cd "$$wt"; \
 	slither-mutate src/ --test-cmd '$(MUTATE_TEST_CMD)' --timeout 300 --output-dir "$$root/mutation_campaign"
 
 # Echidna suite
 # https://github.com/crytic/echidna
 
 .PHONY: echidna
-echidna: echidna-paymaster echidna-account echidna-paylinks
+echidna: echidna-paymaster echidna-account echidna-paylinks echidna-cctp
 
 .PHONY: echidna-paymaster
 echidna-paymaster:
@@ -130,6 +136,10 @@ echidna-account:
 .PHONY: echidna-paylinks
 echidna-paylinks:
 	echidna test/echidna/PaylinksEchidna.sol --contract PaylinksEchidna --config echidna-paylinks.yaml
+
+.PHONY: echidna-cctp
+echidna-cctp:
+	echidna test/echidna/CCTPEchidna.sol --contract CCTPEchidna --config echidna-cctp.yaml
 
 # Local node (Anvil)
 
@@ -200,6 +210,59 @@ verify-resolver-mainnet:
 	forge verify-contract $(RESOLVER) src/ens/MozaikL1Resolver.sol:MozaikL1Resolver \
 		--chain 1 \
 		--guess-constructor-args \
+		--watch
+
+# CCTP forwarder (every EVM chain with CCTP V2)
+# Deploys a frozen record through Nick's deployer, so the implementation, the factory and every forwarder
+# have the same addresses on every chain of one environment. RECORD picks the record: mainnet
+# (script/cctp/forwarder-v1.json) or sepolia (script/cctp/forwarder-v1-sepolia.json). NETWORK is an rpc_endpoints name from foundry.toml
+# (sepolia, arbitrum_sepolia, amoy, base_sepolia, ethereum, arbitrum, polygon, base_mainnet).
+# Add --broadcast to EXTRA to send (dry-run by default). The broadcaster is any funded wallet, set with the
+# --account keystore flag or PRIVATE_KEY.
+CCTP_FORWARDER_RECORD = script/cctp/forwarder-v1$(if $(filter sepolia,$(RECORD)),-sepolia).json
+export CCTP_FORWARDER_RECORD
+
+.PHONY: deploy-forwarder
+deploy-forwarder:
+	@$(if $(filter mainnet sepolia,$(RECORD)),,$(error RECORD=mainnet|sepolia is required))
+	forge script script/05_DeployCCTPForwarder.s.sol \
+		--rpc-url $(NETWORK) \
+		$(EXTRA)
+
+# Rebuilds both records from the current source: init code, addresses, code hashes and golden forwarders.
+# Only for a version that is not deployed yet, because any source change moves every address. Afterwards,
+# update the addresses pinned in test/cctp/MozaikCCTPForwarderGolden.t.sol.
+.PHONY: forwarder-records
+forwarder-records:
+	@set -e; for record in script/cctp/forwarder-v1.json script/cctp/forwarder-v1-sepolia.json; do \
+		FOUNDRY_PROFILE=record CCTP_FORWARDER_RECORD=$$record forge script script/cctp/GenerateForwarderRecord.s.sol; \
+		[ -z "$$(tail -c1 $$record)" ] || echo >> $$record; \
+	done
+
+# Checks the deployed code hashes, the golden forwarder and Circle's contracts on NETWORK.
+.PHONY: verify-forwarder
+verify-forwarder:
+	@$(if $(filter mainnet sepolia,$(RECORD)),,$(error RECORD=mainnet|sepolia is required))
+	forge script script/VerifyDeployForwarder.s.sol \
+		--rpc-url $(NETWORK)
+
+# Etherscan source verification for the forwarder implementation and factory on NETWORK.
+# Requires ETHERSCAN_API_KEY and jq.
+.PHONY: verify-forwarder-source
+verify-forwarder-source:
+	@$(if $(filter mainnet sepolia,$(RECORD)),,$(error RECORD=mainnet|sepolia is required))
+	forge verify-contract $$(jq -r .implementation.address $(CCTP_FORWARDER_RECORD)) \
+		src/cctp/MozaikCCTPForwarder.sol:MozaikCCTPForwarder \
+		--rpc-url $(NETWORK) \
+		--constructor-args $$(cast abi-encode "constructor(address,address,uint256)" \
+			$$(jq -r .config.tokenMessenger $(CCTP_FORWARDER_RECORD)) \
+			$$(jq -r .config.baseUsdc $(CCTP_FORWARDER_RECORD)) \
+			$$(jq -r .config.baseChainId $(CCTP_FORWARDER_RECORD))) \
+		--watch
+	forge verify-contract $$(jq -r .factory.address $(CCTP_FORWARDER_RECORD)) \
+		src/cctp/MozaikCCTPForwarderFactory.sol:MozaikCCTPForwarderFactory \
+		--rpc-url $(NETWORK) \
+		--constructor-args $$(cast abi-encode "constructor(address)" $$(jq -r .implementation.address $(CCTP_FORWARDER_RECORD))) \
 		--watch
 
 # Funding

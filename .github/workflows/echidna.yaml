@@ -26,15 +26,15 @@ jobs:
       - name: Compile contracts
         run: forge build --build-info
 
-      # Persist each suite's corpus so coverage-guided runs build on prior exploration.
-      # Each cache is keyed on only its own harness and config, so editing one suite does not
-      # invalidate the others' corpora.
+      # Persist each suite's corpus across runs. Cache entries are immutable, so every run saves a new one.
       - name: Cache Echidna corpus - Account
         uses: actions/cache@v6
         with:
           path: echidna-corpus-account
-          key: echidna-corpus-account-${{ hashFiles('test/echidna/AccountEchidna.sol', 'echidna-account.yaml') }}
-          restore-keys: echidna-corpus-account-
+          key: echidna-corpus-account-${{ hashFiles('test/echidna/AccountEchidna.sol', 'echidna-account.yaml', 'src/account/**') }}-${{ github.run_id }}
+          restore-keys: |
+            echidna-corpus-account-${{ hashFiles('test/echidna/AccountEchidna.sol', 'echidna-account.yaml', 'src/account/**') }}-
+            echidna-corpus-account-
 
       - name: Echidna - Account
         uses: crytic/echidna-action@v2
@@ -44,13 +44,16 @@ jobs:
           contract: AccountEchidna
           config: echidna-account.yaml
           crytic-args: --ignore-compile
+          echidna-version: v2.3.3
 
       - name: Cache Echidna corpus - Paymaster
         uses: actions/cache@v6
         with:
           path: echidna-corpus-paymaster
-          key: echidna-corpus-paymaster-${{ hashFiles('test/echidna/PaymasterEchidna.sol', 'echidna-paymaster.yaml') }}
-          restore-keys: echidna-corpus-paymaster-
+          key: echidna-corpus-paymaster-${{ hashFiles('test/echidna/PaymasterEchidna.sol', 'echidna-paymaster.yaml', 'src/paymaster/**') }}-${{ github.run_id }}
+          restore-keys: |
+            echidna-corpus-paymaster-${{ hashFiles('test/echidna/PaymasterEchidna.sol', 'echidna-paymaster.yaml', 'src/paymaster/**') }}-
+            echidna-corpus-paymaster-
 
       - name: Echidna - Paymaster
         uses: crytic/echidna-action@v2
@@ -62,13 +65,16 @@ jobs:
           # before the paymaster harness deploys (BasePaymaster's constructor calls into it).
           config: echidna-paymaster.yaml
           crytic-args: --ignore-compile
+          echidna-version: v2.3.3
 
       - name: Cache Echidna corpus - Paylinks
         uses: actions/cache@v6
         with:
           path: echidna-corpus-paylinks
-          key: echidna-corpus-paylinks-${{ hashFiles('test/echidna/PaylinksEchidna.sol', 'echidna-paylinks.yaml') }}
-          restore-keys: echidna-corpus-paylinks-
+          key: echidna-corpus-paylinks-${{ hashFiles('test/echidna/PaylinksEchidna.sol', 'echidna-paylinks.yaml', 'src/paylinks/**') }}-${{ github.run_id }}
+          restore-keys: |
+            echidna-corpus-paylinks-${{ hashFiles('test/echidna/PaylinksEchidna.sol', 'echidna-paylinks.yaml', 'src/paylinks/**') }}-
+            echidna-corpus-paylinks-
 
       - name: Echidna - Paylinks
         uses: crytic/echidna-action@v2
@@ -78,3 +84,27 @@ jobs:
           contract: PaylinksEchidna
           config: echidna-paylinks.yaml
           crytic-args: --ignore-compile
+          echidna-version: v2.3.3
+
+      - name: Cache Echidna corpus - CCTP
+        uses: actions/cache@v6
+        with:
+          path: echidna-corpus-cctp
+          key: echidna-corpus-cctp-${{ hashFiles('test/echidna/CCTPEchidna.sol', 'echidna-cctp.yaml', 'src/cctp/**', 'test/cctp/CCTPBaseTest.t.sol') }}-${{ github.run_id }}
+          restore-keys: |
+            echidna-corpus-cctp-${{ hashFiles('test/echidna/CCTPEchidna.sol', 'echidna-cctp.yaml', 'src/cctp/**', 'test/cctp/CCTPBaseTest.t.sol') }}-
+            echidna-corpus-cctp-
+
+      - name: Echidna - CCTP
+        uses: crytic/echidna-action@v2
+        with:
+          echidna-workdir: .
+          files: .
+          contract: CCTPEchidna
+          config: echidna-cctp.yaml
+          crytic-args: --ignore-compile
+          echidna-version: v2.3.3
+
+      # Keep coverage reports out of the cached corpora. The Echidna container writes them as root.
+      - name: Drop coverage reports from the corpora
+        run: sudo find . -maxdepth 2 -path './echidna-corpus-*/covered.*' -delete

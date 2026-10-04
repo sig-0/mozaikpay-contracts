@@ -1,0 +1,7 @@
+testMode: property
+seqLen: 100
+testLimit: 500000
+workers: 4
+corpusDir: echidna-corpus-cctp
+coverage: true
+balanceContract: 1000000000000000000000000

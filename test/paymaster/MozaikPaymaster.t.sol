@@ -128,6 +128,34 @@ contract MozaikPaymasterTest is BaseTest {
         assertEq(agg, address(1));
     }
 
+    function test_ValidatePaymasterUserOp_OtherChain() public {
+        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        op.paymasterAndData = _signPaymasterApproval(op, validUntil, validAfter, verifyingSignerKey, address(paymaster));
+
+        vm.prank(address(localEntryPoint));
+        (, uint256 validationData) = paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
+        (address agg,,) = _unpackValidation(validationData);
+        assertEq(agg, address(0), "sponsored on the signing chain");
+
+        vm.chainId(block.chainid + 1);
+
+        vm.prank(address(localEntryPoint));
+        (, validationData) = paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
+        (agg,,) = _unpackValidation(validationData);
+        assertEq(agg, address(1), "rejected on another chain");
+    }
+
+    /// @dev The approval does not cover the paymaster gas limits, which is safe only while postOp never runs.
+    function test_ValidatePaymasterUserOp_ReturnsEmptyContext() public {
+        PackedUserOperation memory op = _buildUserOp(address(account), "");
+        op.paymasterAndData = _signPaymasterApproval(op, validUntil, validAfter, verifyingSignerKey, address(paymaster));
+
+        vm.prank(address(localEntryPoint));
+        (bytes memory context,) = paymaster.validatePaymasterUserOp(op, bytes32(0), 0);
+
+        assertEq(context.length, 0);
+    }
+
     function testFuzz_ValidatePaymasterUserOp_ArbitrarySignature(bytes memory sig) public {
         // Only test with 65-byte sigs, as shorter ones produce no recovery, longer ones encode differently
         sig = _resize65(sig);

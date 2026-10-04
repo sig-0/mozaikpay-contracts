@@ -41,3 +41,14 @@ Four contracts are deployed per environment on Base, plus one on Ethereum L1:
 5. **MozaikL1Resolver** (Ethereum, `src/ens/`) -- ENS resolver for `mozaikpay.eth`. Subnames resolve through a
    CCIP-read gateway; the resolver only checks the gateway's signature. Vendored
    from [Basenames](https://github.com/base-org/basenames).
+6. **MozaikCCTPForwarder** (every EVM chain with CCTP V2, `src/cctp/`) -- Per-account deposit address. Each account
+   gets an ERC-1167 clone whose only immutable argument is its Base account. Anyone can call `forward`. On Base, it
+   transfers USDC to the account. On other chains, it burns USDC through CCTP V2 with the account as the mint
+   recipient on Base, no destination caller and no hook, with `maxFee` capped at 20 bps. Only the account can move
+   other tokens out: with a finalized CCTP message from Base, or with a direct `rescue` call on Base. The message body
+   is `abi.encode(token, to, amount, deadline)`, and the forwarder refuses it after `deadline` (a timestamp in
+   seconds), so a message whose delivery failed cannot be replayed later. No owner, no storage, no upgrade path. The
+   constructor takes Circle's TokenMessengerV2, the Base USDC and the Base chain id.
+7. **MozaikCCTPForwarderFactory** -- Deploys forwarder clones at deterministic addresses (`predict`, `deploy`,
+   `deployAndForward`). Both contracts deploy through Nick's deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`), so
+   the implementation, the factory and every forwarder have the same address on every chain of one environment.

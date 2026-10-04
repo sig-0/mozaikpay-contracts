@@ -1,7 +1,8 @@
 # Security Policy
 
 MozaikPay smart contracts custody and move real value (USDC escrow, ERC-4337 smart accounts, and a gas-sponsoring
-paymaster on Base). We take security seriously and appreciate the work of researchers who help keep users' funds safe.
+paymaster on Base, and per-account USDC deposit forwarders on every supported CCTP V2 chain). We take security seriously
+and appreciate the work of researchers who help keep users' funds safe.
 This document explains what is in scope, how to report a vulnerability privately, and what to expect from us in return.
 
 ## Reporting a Vulnerability
@@ -36,17 +37,23 @@ We can review reports in English.
 
 ### In scope
 
-The production Solidity in this repository (`src/`) and the contracts deployed from it on Base:
+The production Solidity in this repository (`src/`) and the contracts deployed from it:
 
-| Contract                   | Path                                         | Role                                          |
-|----------------------------|----------------------------------------------|-----------------------------------------------|
-| `MozaikAccount`            | `src/account/MozaikAccount.sol`              | ERC-4337 smart account (proxy implementation) |
-| `MozaikAccountFactory`     | `src/account/MozaikAccountFactory.sol`       | CREATE2 factory for accounts                  |
-| `MozaikVerifyingPaymaster` | `src/paymaster/MozaikVerifyingPaymaster.sol` | Gas sponsorship for UserOperations            |
-| `MozaikPaylinks`           | `src/paylinks/MozaikPaylinks.sol`            | Non-upgradeable USDC escrow for payment links |
+| Contract                     | Path                                         | Role                                                         |
+|------------------------------|----------------------------------------------|--------------------------------------------------------------|
+| `MozaikAccount`              | `src/account/MozaikAccount.sol`              | ERC-4337 smart account (proxy implementation)                |
+| `MozaikAccountFactory`       | `src/account/MozaikAccountFactory.sol`       | CREATE2 factory for accounts                                 |
+| `MozaikVerifyingPaymaster`   | `src/paymaster/MozaikVerifyingPaymaster.sol` | Gas sponsorship for UserOperations                           |
+| `MozaikPaylinks`             | `src/paylinks/MozaikPaylinks.sol`            | Non-upgradeable USDC escrow for payment links                |
+| `MozaikCCTPForwarder`        | `src/cctp/MozaikCCTPForwarder.sol`           | Per-account CCTP V2 deposit forwarder (clone implementation) |
+| `MozaikCCTPForwarderFactory` | `src/cctp/MozaikCCTPForwarderFactory.sol`    | Deterministic factory for forwarder clones                   |
 
 **Networks:** Base Mainnet (chain ID `8453`) and Base Sepolia (chain ID
-`84532`). The canonical deployment addresses are published in the project's deployment records; verify any address
+`84532`). The CCTP forwarder contracts also run on Ethereum (`1`), Arbitrum One (`42161`) and Polygon PoS (`137`),
+and on Sepolia (`11155111`), Arbitrum Sepolia (`421614`) and Polygon Amoy (`80002`). They have the same addresses on
+every chain of one environment, recorded in `script/cctp/forwarder-v1.json` and
+`script/cctp/forwarder-v1-sepolia.json`. The canonical deployment addresses are published in the project's deployment
+records; verify any address
 against those before reporting.
 
 Examples of in-scope issues:
@@ -57,6 +64,9 @@ Examples of in-scope issues:
   authorization, storage collision).
 - Draining or griefing the paymaster's EntryPoint deposit, or bypassing sponsor approval in `MozaikVerifyingPaymaster`.
 - Factory issues that let an attacker deploy a malicious or hijackable account at a victim's counterfactual address.
+- Any path that moves value out of a `MozaikCCTPForwarder` other than a CCTP burn with its account as the mint
+  recipient, a transfer to its account on Base, or a rescue that its account authorized. Also any way to deploy
+  other code at a forwarder's address.
 - Broken access control, replay, or signature-malleability affecting any of the above.
 
 ### Out of scope
@@ -82,7 +92,9 @@ The security-supported code is:
 - The contracts **currently deployed** on Base Mainnet at the canonical addresses in our deployment records.
 
 `MozaikPaylinks` is non-upgradeable and immutable once deployed; a fix there means deploying a new instance and
-migrating. `MozaikAccount` is a UUPS-style proxy implementation. Because on-chain contracts cannot be silently patched,
+migrating. `MozaikCCTPForwarder` and its factory are immutable per version; a fix ships as a new version at new
+addresses, and funds already at an older forwarder leave only through that version's own paths. `MozaikAccount` is a
+UUPS-style proxy implementation. Because on-chain contracts cannot be silently patched,
 remediation for a live issue may involve pausing intake, deploying replacement contracts, and/or migrating funds,
 coordinated with you under embargo.
 

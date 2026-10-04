@@ -4,4 +4,7 @@ testLimit: 500000
 workers: 4
 corpusDir: echidna-corpus-account
 coverage: true
-solcArgs: "--optimize --optimize-runs 200"
+balanceContract: 1000000000000000000000000
+
+# The factory requires the canonical EntryPoint v0.9 to exist at deploy time.
+deployContracts: [ [ "0x433709009B8330FDa32311DF1C2AFA402eD8D009", "EntryPoint" ] ]

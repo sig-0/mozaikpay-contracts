@@ -4,4 +4,5 @@ testLimit: 500000
 workers: 4
 corpusDir: echidna-corpus-paylinks
 coverage: true
-solcArgs: "--optimize --optimize-runs 200"
+# Lets a single call's time jump pass any link's expiry.
+maxTimeDelay: 604800

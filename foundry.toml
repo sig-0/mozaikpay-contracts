@@ -13,6 +13,13 @@ optimizer_runs = 200
 # Coverage: only report production code; exclude tests, scripts, and lib
 no_match_coverage = "(test|script|lib|e2e|mocks)"
 
+# Scripts and tests read the frozen CCTP forwarder records
+fs_permissions = [{ access = "read", path = "./script/cctp" }]
+
+# Only `make forwarder-records` may write the CCTP forwarder records.
+[profile.record]
+fs_permissions = [{ access = "read-write", path = "./script/cctp" }]
+
 [profile.default.fuzz]
 runs = 10000
 max_test_rejects = 65536
@@ -40,9 +47,17 @@ base_mainnet = "${BASE_MAINNET_RPC}"
 base_sepolia = "${BASE_SEPOLIA_RPC}"
 ethereum = "${ETH_MAINNET_RPC}"
 sepolia = "${ETH_SEPOLIA_RPC}"
+arbitrum = "${ARBITRUM_MAINNET_RPC}"
+arbitrum_sepolia = "${ARBITRUM_SEPOLIA_RPC}"
+polygon = "${POLYGON_MAINNET_RPC}"
+amoy = "${POLYGON_AMOY_RPC}"
 
 [etherscan]
 base_mainnet = { key = "${ETHERSCAN_API_KEY}", chain = 8453 }
 base_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 84532 }
 ethereum = { key = "${ETHERSCAN_API_KEY}", chain = 1 }
 sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11155111 }
+arbitrum = { key = "${ETHERSCAN_API_KEY}", chain = 42161 }
+arbitrum_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 421614 }
+polygon = { key = "${ETHERSCAN_API_KEY}", chain = 137 }
+amoy = { key = "${ETHERSCAN_API_KEY}", chain = 80002 }
