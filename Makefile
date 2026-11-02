@@ -214,26 +214,29 @@ verify-resolver-mainnet:
 # CCTP forwarder (every EVM chain with CCTP V2)
 # Deploys a frozen record through Nick's deployer, so the implementation, the factory and every forwarder
 # have the same addresses on every chain of one environment. RECORD picks the record: mainnet
-# (script/cctp/forwarder-v1.json) or sepolia (script/cctp/forwarder-v1-sepolia.json). NETWORK is an rpc_endpoints name from foundry.toml
-# (sepolia, arbitrum_sepolia, amoy, base_sepolia, ethereum, arbitrum, polygon, base_mainnet).
+# (script/cctp/forwarder-v1.json), sepolia (script/cctp/forwarder-v1-sepolia.json), arc
+# (script/cctp/forwarder-arc-v1.json) or arc-sepolia (script/cctp/forwarder-arc-v1-sepolia.json). NETWORK is an
+# rpc_endpoints name from foundry.toml (sepolia, arbitrum_sepolia, amoy, base_sepolia, arc_testnet, ethereum, arbitrum,
+# polygon, base_mainnet, arc).
 # Add --broadcast to EXTRA to send (dry-run by default). The broadcaster is any funded wallet, set with the
 # --account keystore flag or PRIVATE_KEY.
-CCTP_FORWARDER_RECORD = script/cctp/forwarder-v1$(if $(filter sepolia,$(RECORD)),-sepolia).json
+CCTP_FORWARDER_RECORD = script/cctp/forwarder$(if $(filter arc arc-sepolia,$(RECORD)),-arc)-v1$(if $(filter sepolia arc-sepolia,$(RECORD)),-sepolia).json
+CCTP_FORWARDER_CONTRACT = $(if $(filter arc arc-sepolia,$(RECORD)),src/cctp/MozaikCCTPArcForwarder.sol:MozaikCCTPArcForwarder,src/cctp/MozaikCCTPForwarder.sol:MozaikCCTPForwarder)
 export CCTP_FORWARDER_RECORD
 
 .PHONY: deploy-forwarder
 deploy-forwarder:
-	@$(if $(filter mainnet sepolia,$(RECORD)),,$(error RECORD=mainnet|sepolia is required))
+	@$(if $(filter mainnet sepolia arc arc-sepolia,$(RECORD)),,$(error RECORD=mainnet|sepolia|arc|arc-sepolia is required))
 	forge script script/05_DeployCCTPForwarder.s.sol \
 		--rpc-url $(NETWORK) \
 		$(EXTRA)
 
-# Rebuilds both records from the current source: init code, addresses, code hashes and golden forwarders.
-# Only for a version that is not deployed yet, because any source change moves every address. Afterwards,
-# update the addresses pinned in test/cctp/MozaikCCTPForwarderGolden.t.sol.
+# Rebuilds the records that are not deployed yet from the current source: init code, addresses, code hashes and
+# golden forwarders. Any source change moves every address. Afterwards, update the addresses pinned in
+# test/cctp/MozaikCCTPForwarderGolden.t.sol.
 .PHONY: forwarder-records
 forwarder-records:
-	@set -e; for record in script/cctp/forwarder-v1.json script/cctp/forwarder-v1-sepolia.json; do \
+	@set -e; for record in script/cctp/forwarder-arc-v1.json script/cctp/forwarder-arc-v1-sepolia.json; do \
 		FOUNDRY_PROFILE=record CCTP_FORWARDER_RECORD=$$record forge script script/cctp/GenerateForwarderRecord.s.sol; \
 		[ -z "$$(tail -c1 $$record)" ] || echo >> $$record; \
 	done
@@ -241,28 +244,31 @@ forwarder-records:
 # Checks the deployed code hashes, the golden forwarder and Circle's contracts on NETWORK.
 .PHONY: verify-forwarder
 verify-forwarder:
-	@$(if $(filter mainnet sepolia,$(RECORD)),,$(error RECORD=mainnet|sepolia is required))
+	@$(if $(filter mainnet sepolia arc arc-sepolia,$(RECORD)),,$(error RECORD=mainnet|sepolia|arc|arc-sepolia is required))
 	forge script script/VerifyDeployForwarder.s.sol \
 		--rpc-url $(NETWORK)
 
-# Etherscan source verification for the forwarder implementation and factory on NETWORK.
-# Requires ETHERSCAN_API_KEY and jq.
+# Source verification for the forwarder implementation and factory on NETWORK, through Etherscan by default.
+# Requires ETHERSCAN_API_KEY and jq. EXTRA is appended to both forge verify-contract calls, for example
+# EXTRA="--verifier blockscout --verifier-url https://explorer.arc.io/api/" for Arc's Blockscout explorer.
 .PHONY: verify-forwarder-source
 verify-forwarder-source:
-	@$(if $(filter mainnet sepolia,$(RECORD)),,$(error RECORD=mainnet|sepolia is required))
+	@$(if $(filter mainnet sepolia arc arc-sepolia,$(RECORD)),,$(error RECORD=mainnet|sepolia|arc|arc-sepolia is required))
 	forge verify-contract $$(jq -r .implementation.address $(CCTP_FORWARDER_RECORD)) \
-		src/cctp/MozaikCCTPForwarder.sol:MozaikCCTPForwarder \
+		$(CCTP_FORWARDER_CONTRACT) \
 		--rpc-url $(NETWORK) \
 		--constructor-args $$(cast abi-encode "constructor(address,address,uint256)" \
 			$$(jq -r .config.tokenMessenger $(CCTP_FORWARDER_RECORD)) \
 			$$(jq -r .config.baseUsdc $(CCTP_FORWARDER_RECORD)) \
 			$$(jq -r .config.baseChainId $(CCTP_FORWARDER_RECORD))) \
-		--watch
+		--watch \
+		$(EXTRA)
 	forge verify-contract $$(jq -r .factory.address $(CCTP_FORWARDER_RECORD)) \
 		src/cctp/MozaikCCTPForwarderFactory.sol:MozaikCCTPForwarderFactory \
 		--rpc-url $(NETWORK) \
 		--constructor-args $$(cast abi-encode "constructor(address)" $$(jq -r .implementation.address $(CCTP_FORWARDER_RECORD))) \
-		--watch
+		--watch \
+		$(EXTRA)
 
 # Funding
 # Requires PAYMASTER_ADDRESS and DEPOSIT_AMOUNT_WEI in the env.

@@ -89,22 +89,9 @@ contract ForwarderHandler is Test {
     }
 
     function rescueDirect(address caller, bool asAccount, uint256 amount) external {
-        if (asAccount) caller = account;
-        amount = bound(amount, 0, usdc.balanceOf(address(forwarder)));
-
-        bool authorized = caller == account && onBase;
-
-        _setChainId();
-        vm.prank(caller);
-        try forwarder.rescue(address(usdc), rescueTo, amount) {
-            if (!authorized) unauthorizedExit = true;
-            rescued += amount;
-        } catch {
-            if (authorized) validCallReverted = true;
-        }
+        rescued += _rescueDirect(address(usdc), caller, asAccount, amount);
     }
 
-    /// @dev Delivers through the transmitter, a misrouting transmitter or a direct call.
     function rescueMessage(
         uint8 route,
         bool fromAccount,
@@ -114,11 +101,47 @@ contract ForwarderHandler is Test {
         uint256 amount,
         uint256 deadline
     ) external {
+        rescued += _rescueMessage(address(usdc), route, fromAccount, sender, sourceDomain, threshold, amount, deadline);
+    }
+
+    /// @dev Returns the amount that left the forwarder, or 0 when the rescue reverted.
+    function _rescueDirect(address asset, address caller, bool asAccount, uint256 amount) internal returns (uint256) {
+        if (asAccount) caller = account;
+        amount = bound(amount, 0, _forwarderBalance(asset));
+
+        bool authorized = caller == account && onBase;
+
+        _setChainId();
+        vm.prank(caller);
+        try forwarder.rescue(asset, rescueTo, amount) {}
+        catch {
+            if (authorized) validCallReverted = true;
+
+            return 0;
+        }
+
+        if (!authorized) unauthorizedExit = true;
+
+        return amount;
+    }
+
+    /// @dev Delivers through the transmitter, a misrouting transmitter or a direct call. Returns the amount that
+    ///      left the forwarder, or 0 when the rescue reverted.
+    function _rescueMessage(
+        address asset,
+        uint8 route,
+        bool fromAccount,
+        bytes32 sender,
+        uint32 sourceDomain,
+        uint32 threshold,
+        uint256 amount,
+        uint256 deadline
+    ) internal returns (uint256) {
         if (fromAccount) sender = bytes32(uint256(uint160(account)));
         if (sourceDomain % 4 != 0) sourceDomain = 6;
         if (threshold % 3 == 0) threshold = 1000;
-        amount = bound(amount, 0, usdc.balanceOf(address(forwarder)));
-        bytes memory body = abi.encode(address(usdc), rescueTo, amount, deadline);
+        amount = bound(amount, 0, _forwarderBalance(asset));
+        bytes memory body = abi.encode(asset, rescueTo, amount, deadline);
 
         route %= 3;
         bool authorized = route != 2 && sourceDomain == 6 && sender == bytes32(uint256(uint160(account)))
@@ -143,11 +166,17 @@ contract ForwarderHandler is Test {
         if (!ok) {
             if (authorized) validCallReverted = true;
 
-            return;
+            return 0;
         }
 
         if (!authorized) unauthorizedExit = true;
-        rescued += amount;
+
+        return amount;
+    }
+
+    /// @dev The asset address(0) is the native coin.
+    function _forwarderBalance(address asset) internal view returns (uint256) {
+        return asset == address(0) ? address(forwarder).balance : usdc.balanceOf(address(forwarder));
     }
 
     function callImplementation(uint256 amount) external {
@@ -165,24 +194,36 @@ contract MozaikCCTPForwarderInvariantTest is CCTPBaseTest {
 
     /// @dev One token plays both roles (Base USDC and the source-chain USDC linked to it), so the ghost totals
     ///      cover both chains.
-    function setUp() public override {
+    function setUp() public virtual override {
         super.setUp();
+        _shareUsdc();
+        _target(
+            new ForwarderHandler(forwarder, implementation, transmitter, usdc, account, BURN_LIMIT), new bytes4[](0)
+        );
+    }
+
+    function _shareUsdc() internal {
         usdc = baseUsdc;
         minter.setLocalToken(BASE_DOMAIN, address(baseUsdc), address(baseUsdc));
         minter.setMaxBurnAmountPerMessage(address(baseUsdc), BURN_LIMIT);
+    }
 
-        handler = new ForwarderHandler(forwarder, implementation, transmitter, usdc, account, BURN_LIMIT);
+    /// @dev Fuzzes the v1 handler selectors plus `extra` on `target`.
+    function _target(ForwarderHandler target, bytes4[] memory extra) internal {
+        handler = target;
+        targetContract(address(target));
 
-        targetContract(address(handler));
-
-        bytes4[] memory selectors = new bytes4[](6);
+        bytes4[] memory selectors = new bytes4[](6 + extra.length);
         selectors[0] = ForwarderHandler.fund.selector;
         selectors[1] = ForwarderHandler.switchChain.selector;
         selectors[2] = ForwarderHandler.forward.selector;
         selectors[3] = ForwarderHandler.rescueDirect.selector;
         selectors[4] = ForwarderHandler.rescueMessage.selector;
         selectors[5] = ForwarderHandler.callImplementation.selector;
-        targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
+        for (uint256 i = 0; i < extra.length; i++) {
+            selectors[6 + i] = extra[i];
+        }
+        targetSelector(FuzzSelector({addr: address(target), selectors: selectors}));
     }
 
     /// @dev Every unit that entered the forwarder is still there or left through an allowed exit.

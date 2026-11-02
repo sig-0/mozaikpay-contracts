@@ -21,9 +21,10 @@ interface ITokenMinterV2Limits {
 }
 
 /// @notice Reads a frozen CCTP forwarder record and deploys its init code through Nick's deployer.
-/// @dev A record holds the exact v1 init code for one environment. Every chain, fork and local node of that
-///      environment deploys these bytes, so the implementation, the factory and every forwarder get the same
-///      addresses everywhere.
+/// @dev A record holds the exact init code of one forwarder contract for one environment: MozaikCCTPForwarder, or
+///      MozaikCCTPArcForwarder when `native` is set. Every chain, fork and local node that deploys a record deploys
+///      these bytes, so the implementation, the factory and every forwarder get the same addresses on each of them.
+///      A record with a `chainId` deploys only to that chain.
 abstract contract CCTPForwarderRecord is CommonBase {
     /// @dev Nick's deterministic deployment proxy (github.com/Arachnid/deterministic-deployment-proxy). It has the
     ///      same address on every EVM chain and runs CREATE2 with the caller's salt and init code.
@@ -48,6 +49,8 @@ abstract contract CCTPForwarderRecord is CommonBase {
         Deployment factory;
         address goldenAccount;
         address goldenForwarder;
+        bool native;
+        uint256 chainId;
     }
 
     function _readForwarderRecord(string memory path) internal view returns (ForwarderRecord memory record) {
@@ -61,11 +64,17 @@ abstract contract CCTPForwarderRecord is CommonBase {
         record.factory = _readDeployment(json, ".factory");
         record.goldenAccount = vm.parseJsonAddress(json, ".golden.account");
         record.goldenForwarder = vm.parseJsonAddress(json, ".golden.forwarder");
+        record.native = vm.keyExistsJson(json, ".native") && vm.parseJsonBool(json, ".native");
+
+        if (vm.keyExistsJson(json, ".chainId")) record.chainId = vm.parseJsonUint(json, ".chainId");
     }
 
-    /// @dev Checks Circle's CCTP V2 contracts on this chain against the record, and off Base that USDC can burn to
-    ///      Base. Returns the local CCTP domain and USDC.
+    /// @dev Checks that this chain is the record's chain, when the record names one. Then checks Circle's CCTP V2
+    ///      contracts on this chain against the record, and off Base that USDC can burn to Base. Returns the local
+    ///      CCTP domain and USDC.
     function _checkCircle(ForwarderRecord memory record) internal view returns (uint32 domain, address usdc) {
+        require(record.chainId == 0 || block.chainid == record.chainId, "Record is for another chain");
+
         ITokenMessengerV2 messenger = ITokenMessengerV2(record.tokenMessenger);
         require(address(messenger).code.length > 0, "No TokenMessengerV2 on this chain");
         domain = IMessageTransmitterV2(messenger.localMessageTransmitter()).localDomain();

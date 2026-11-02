@@ -5,15 +5,16 @@ import {Vm} from "forge-std/Vm.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
+import {MozaikCCTPArcForwarder} from "../../src/cctp/MozaikCCTPArcForwarder.sol";
 import {MozaikCCTPForwarder} from "../../src/cctp/MozaikCCTPForwarder.sol";
 import {MozaikCCTPForwarderFactory} from "../../src/cctp/MozaikCCTPForwarderFactory.sol";
 import {ITokenMessengerV2} from "../../src/cctp/ITokenMessengerV2.sol";
 import {MockMessageTransmitterV2, MockTokenMessengerV2, MockTokenMinterV2} from "../cctp/CCTPBaseTest.t.sol";
 
-/// @notice Echidna fuzz target for MozaikCCTPForwarder and MozaikCCTPForwarderFactory.
-/// @dev Drives Base-mode and source-mode forwarders for two accounts from varied callers, holding USDC, an
-///      unrelated token and native coin. Each call is predicted to succeed or revert, and ghost totals pin every
-///      balance.
+/// @notice Echidna fuzz target for MozaikCCTPForwarder, MozaikCCTPArcForwarder and MozaikCCTPForwarderFactory.
+/// @dev Drives Base-mode and source-mode forwarders of both classes for two accounts from varied callers, holding
+///      USDC, an unrelated token and native coin. Each call is predicted to succeed or revert, and ghost totals pin
+///      every balance.
 contract CCTPEchidna {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
@@ -29,8 +30,13 @@ contract CCTPEchidna {
     uint256 internal constant BASE_MODE = 0;
     uint256 internal constant SOURCE_MODE = 1;
 
-    /// @dev Slot = 2 * account index + mode. Slots 0 and 1 serve ACCOUNT_A, slots 2 and 3 serve ACCOUNT_B.
-    uint256 internal constant SLOT_COUNT = 4;
+    /// @dev Implementation index = mode, plus ARC_IMPLEMENTATIONS for a MozaikCCTPArcForwarder.
+    uint256 internal constant ARC_IMPLEMENTATIONS = 2;
+    uint256 internal constant IMPLEMENTATION_COUNT = 4;
+
+    /// @dev Slot = IMPLEMENTATION_COUNT * account index + implementation index. Slots 0 to 3 serve ACCOUNT_A, slots
+    ///      4 to 7 serve ACCOUNT_B.
+    uint256 internal constant SLOT_COUNT = 8;
 
     uint256 internal constant ASSET_BASE_USDC = 0;
     uint256 internal constant ASSET_LOCAL_USDC = 1;
@@ -87,12 +93,12 @@ contract CCTPEchidna {
     MockTokenMessengerV2 internal messenger;
     MockTokenMinterV2 internal minter;
 
-    /// @dev Indexed by mode.
-    MozaikCCTPForwarder[2] internal implementations;
-    MozaikCCTPForwarderFactory[2] internal factories;
+    /// @dev Indexed by implementation index.
+    MozaikCCTPForwarder[IMPLEMENTATION_COUNT] internal implementations;
+    MozaikCCTPForwarderFactory[IMPLEMENTATION_COUNT] internal factories;
 
     /// @dev The account each implementation would report if it accepted direct calls.
-    address[2] internal junkAccounts;
+    address[IMPLEMENTATION_COUNT] internal junkAccounts;
 
     address[SLOT_COUNT] internal forwarders;
     bool[SLOT_COUNT] internal deployed;
@@ -102,7 +108,7 @@ contract CCTPEchidna {
     uint256[ASSET_COUNT][SLOT_COUNT] internal funded;
     uint256[ASSET_COUNT][SLOT_COUNT] internal rescued;
     uint256[SLOT_COUNT] internal forwarded;
-    uint256[ASSET_COUNT][2] internal implementationFunded;
+    uint256[ASSET_COUNT][IMPLEMENTATION_COUNT] internal implementationFunded;
     uint256 internal burns;
 
     bool internal validCallReverted;
@@ -127,19 +133,23 @@ contract CCTPEchidna {
         ITokenMessengerV2 tokenMessenger = ITokenMessengerV2(address(messenger));
         implementations[BASE_MODE] = new MozaikCCTPForwarder(tokenMessenger, address(baseUsdc), block.chainid);
         implementations[SOURCE_MODE] = new MozaikCCTPForwarder(tokenMessenger, address(baseUsdc), block.chainid + 1);
+        implementations[ARC_IMPLEMENTATIONS + BASE_MODE] =
+            new MozaikCCTPArcForwarder(tokenMessenger, address(baseUsdc), block.chainid);
+        implementations[ARC_IMPLEMENTATIONS + SOURCE_MODE] =
+            new MozaikCCTPArcForwarder(tokenMessenger, address(baseUsdc), block.chainid + 1);
 
-        for (uint256 i = 0; i < 2; i++) {
+        for (uint256 i = 0; i < IMPLEMENTATION_COUNT; i++) {
             factories[i] = new MozaikCCTPForwarderFactory(implementations[i]);
             junkAccounts[i] = address(bytes20(Clones.fetchCloneArgs(address(implementations[i]))));
         }
 
         for (uint256 slot = 0; slot < SLOT_COUNT; slot++) {
-            forwarders[slot] = factories[_slotMode(slot)].predict(_account(slot));
+            forwarders[slot] = factories[_slotImplementation(slot)].predict(_account(slot));
         }
 
         // ACCOUNT_A's forwarders exist from the start. The fuzzer deploys ACCOUNT_B's.
-        for (uint256 slot = 0; slot < 2; slot++) {
-            if (factories[_slotMode(slot)].deploy(ACCOUNT_A) != forwarders[slot]) factoryMismatch = true;
+        for (uint256 slot = 0; slot < IMPLEMENTATION_COUNT; slot++) {
+            if (factories[_slotImplementation(slot)].deploy(ACCOUNT_A) != forwarders[slot]) factoryMismatch = true;
             deployed[slot] = forwarders[slot].code.length > 0;
         }
     }
@@ -154,25 +164,28 @@ contract CCTPEchidna {
     }
 
     /// @notice Mints a token to, or deals native coin to, an implementation.
-    function fundImplementation(bool base, uint8 assetSeed, uint96 amount) external {
-        uint256 mode = _mode(base);
+    function fundImplementation(uint8 implementationSeed, uint8 assetSeed, uint96 amount) external {
+        uint256 index = _implementation(implementationSeed);
         uint256 asset = _asset(assetSeed);
 
-        _give(address(implementations[mode]), asset, amount);
-        implementationFunded[mode][asset] += amount;
+        _give(address(implementations[index]), asset, amount);
+        implementationFunded[index][asset] += amount;
     }
 
-    /// @notice Sends native coin to a forwarder with a plain call. Only an undeployed forwarder accepts it.
+    /// @notice Sends native coin to a forwarder with a call. An undeployed forwarder accepts it, and a native one
+    ///         accepts it without data.
     function sendNativeToForwarder(uint8 slotSeed, uint64 amount, bytes calldata data) external {
         uint256 slot = _slot(slotSeed);
-        if (_sendNative(forwarders[slot], amount, data)) funded[slot][ASSET_NATIVE] += amount;
+        if (_sendNative(forwarders[slot], _isNative(_slotImplementation(slot)), amount, data)) {
+            funded[slot][ASSET_NATIVE] += amount;
+        }
     }
 
-    /// @notice Sends native coin to an implementation with a plain call, which it must reject.
-    function sendNativeToImplementation(bool base, uint64 amount, bytes calldata data) external {
-        uint256 mode = _mode(base);
-        if (_sendNative(address(implementations[mode]), amount, data)) {
-            implementationFunded[mode][ASSET_NATIVE] += amount;
+    /// @notice Sends native coin to an implementation with a call. Only a native one accepts it, without data.
+    function sendNativeToImplementation(uint8 implementationSeed, uint64 amount, bytes calldata data) external {
+        uint256 index = _implementation(implementationSeed);
+        if (_sendNative(address(implementations[index]), _isNative(index), amount, data)) {
+            implementationFunded[index][ASSET_NATIVE] += amount;
         }
     }
 
@@ -201,24 +214,24 @@ contract CCTPEchidna {
         uint256 slot = _slot(slotSeed);
         bytes memory data = abi.encodeCall(MozaikCCTPForwarderFactory.deploy, (_account(slot)));
 
-        (bool ok, bytes memory returned) = _callAs(caller, address(factories[_slotMode(slot)]), data);
+        (bool ok, bytes memory returned) = _callAs(caller, address(factories[_slotImplementation(slot)]), data);
         _check(true, ok, "deploy");
         if (ok) _recordDeploy(slot, abi.decode(returned, (address)));
     }
 
     /// @notice Deploys a forwarder for the zero account, which the factory must refuse.
-    function deployForZeroAccount(bool base, address caller) external {
+    function deployForZeroAccount(uint8 implementationSeed, address caller) external {
         bytes memory data = abi.encodeCall(MozaikCCTPForwarderFactory.deploy, (address(0)));
 
-        (bool ok,) = _callAs(caller, address(factories[_mode(base)]), data);
+        (bool ok,) = _callAs(caller, address(factories[_implementation(implementationSeed)]), data);
         _check(false, ok, "deployForZeroAccount");
     }
 
     /// @notice Predicts a forwarder for the zero account, which the factory must refuse.
-    function predictForZeroAccount(bool base) external {
+    function predictForZeroAccount(uint8 implementationSeed) external {
         bytes memory data = abi.encodeCall(MozaikCCTPForwarderFactory.predict, (address(0)));
 
-        (bool ok,) = address(factories[_mode(base)]).staticcall(data);
+        (bool ok,) = address(factories[_implementation(implementationSeed)]).staticcall(data);
         _check(false, ok, "predictForZeroAccount");
     }
 
@@ -232,7 +245,7 @@ contract CCTPEchidna {
             MozaikCCTPForwarderFactory.deployAndForward, (_account(slot), args.amount, args.maxFee, args.threshold)
         );
 
-        (bool ok, bytes memory returned) = _callAs(caller, address(factories[_slotMode(slot)]), data);
+        (bool ok, bytes memory returned) = _callAs(caller, address(factories[_slotImplementation(slot)]), data);
         _check(valid, ok, "deployAndForward");
         if (!ok) return;
 
@@ -241,13 +254,18 @@ contract CCTPEchidna {
     }
 
     /// @notice Calls deployAndForward for the zero account, which the factory must refuse.
-    function deployAndForwardForZeroAccount(bool base, address caller, uint256 amount, uint256 maxFee, uint32 threshold)
-        external
-    {
-        bytes memory data =
-            abi.encodeCall(MozaikCCTPForwarderFactory.deployAndForward, (address(0), amount, maxFee, threshold));
+    function deployAndForwardForZeroAccount(
+        uint8 implementationSeed,
+        address caller,
+        uint256 amount,
+        uint256 maxFee,
+        uint32 threshold
+    ) external {
+        bytes memory data = abi.encodeCall(
+            MozaikCCTPForwarderFactory.deployAndForward, (address(0), amount, maxFee, threshold)
+        );
 
-        (bool ok,) = _callAs(caller, address(factories[_mode(base)]), data);
+        (bool ok,) = _callAs(caller, address(factories[_implementation(implementationSeed)]), data);
         _check(false, ok, "deployAndForwardForZeroAccount");
     }
 
@@ -354,33 +372,36 @@ contract CCTPEchidna {
     }
 
     /// @notice Calls forward on an implementation from any caller, which must revert.
-    function forwardFromImplementation(bool base, address caller, uint8 amountCase, uint256 amountSeed) external {
-        uint256 mode = _mode(base);
-        uint256 amount = _implementationAmount(mode, amountCase, amountSeed);
+    function forwardFromImplementation(uint8 implementationSeed, address caller, uint8 amountCase, uint256 amountSeed)
+        external
+    {
+        uint256 index = _implementation(implementationSeed);
+        uint256 amount = _implementationAmount(index, amountCase, amountSeed);
         bytes memory data = abi.encodeCall(MozaikCCTPForwarder.forward, (amount, 0, FINALITY_STANDARD));
 
-        (bool ok,) = _callAs(caller, address(implementations[mode]), data);
+        (bool ok,) = _callAs(caller, address(implementations[index]), data);
         _check(false, ok, "forwardFromImplementation");
     }
 
     /// @notice Calls rescue on an implementation as the account it would report, which must revert.
-    function rescueFromImplementation(bool base, uint8 amountCase, uint256 amountSeed) external {
-        uint256 mode = _mode(base);
-        uint256 amount = _implementationAmount(mode, amountCase, amountSeed);
-        bytes memory data = abi.encodeCall(MozaikCCTPForwarder.rescue, (_token(_forwardAsset(mode)), RESCUE_TO, amount));
+    function rescueFromImplementation(uint8 implementationSeed, uint8 amountCase, uint256 amountSeed) external {
+        uint256 index = _implementation(implementationSeed);
+        uint256 amount = _implementationAmount(index, amountCase, amountSeed);
+        bytes memory data =
+            abi.encodeCall(MozaikCCTPForwarder.rescue, (_token(_forwardAsset(_mode(index))), RESCUE_TO, amount));
 
-        (bool ok,) = _callAs(junkAccounts[mode], address(implementations[mode]), data);
+        (bool ok,) = _callAs(junkAccounts[index], address(implementations[index]), data);
         _check(false, ok, "rescueFromImplementation");
     }
 
     /// @notice Sends an implementation a rescue message from the account it would report, which must revert.
-    function messageImplementation(bool base, uint8 amountCase, uint256 amountSeed) external {
-        uint256 mode = _mode(base);
-        uint256 amount = _implementationAmount(mode, amountCase, amountSeed);
-        bytes memory body = abi.encode(_token(_forwardAsset(mode)), RESCUE_TO, amount, block.timestamp);
+    function messageImplementation(uint8 implementationSeed, uint8 amountCase, uint256 amountSeed) external {
+        uint256 index = _implementation(implementationSeed);
+        uint256 amount = _implementationAmount(index, amountCase, amountSeed);
+        bytes memory body = abi.encode(_token(_forwardAsset(_mode(index))), RESCUE_TO, amount, block.timestamp);
         bytes memory data = abi.encodeCall(
             MockMessageTransmitterV2.deliver,
-            (address(implementations[mode]), BASE_DOMAIN, _padded(junkAccounts[mode]), FINALITY_STANDARD, body)
+            (address(implementations[index]), BASE_DOMAIN, _padded(junkAccounts[index]), FINALITY_STANDARD, body)
         );
 
         (bool ok,) = address(transmitter).call(data);
@@ -388,10 +409,10 @@ contract CCTPEchidna {
     }
 
     /// @notice Reads account() on an implementation, which must revert.
-    function readImplementationAccount(bool base) external {
+    function readImplementationAccount(uint8 implementationSeed) external {
         bytes memory data = abi.encodeCall(MozaikCCTPForwarder.account, ());
 
-        (bool ok,) = address(implementations[_mode(base)]).staticcall(data);
+        (bool ok,) = address(implementations[_implementation(implementationSeed)]).staticcall(data);
         _check(false, ok, "readImplementationAccount");
     }
 
@@ -399,7 +420,7 @@ contract CCTPEchidna {
     function echidna_balances_match_exits() external view returns (bool) {
         for (uint256 slot = 0; slot < SLOT_COUNT; slot++) {
             for (uint256 asset = 0; asset < ASSET_COUNT; asset++) {
-                uint256 forwardedOut = asset == _forwardAsset(_slotMode(slot)) ? forwarded[slot] : 0;
+                uint256 forwardedOut = asset == _forwardAsset(_mode(slot)) ? forwarded[slot] : 0;
                 uint256 out = rescued[slot][asset] + forwardedOut;
                 if (_balance(asset, forwarders[slot]) + out != funded[slot][asset]) return false;
             }
@@ -451,8 +472,8 @@ contract CCTPEchidna {
     function echidna_forwarders_serve_their_accounts() external view returns (bool) {
         if (factoryMismatch) return false;
 
-        for (uint256 mode = 0; mode < 2; mode++) {
-            if (address(factories[mode].FORWARDER_IMPLEMENTATION()) != address(implementations[mode])) return false;
+        for (uint256 index = 0; index < IMPLEMENTATION_COUNT; index++) {
+            if (address(factories[index].FORWARDER_IMPLEMENTATION()) != address(implementations[index])) return false;
         }
 
         for (uint256 slot = 0; slot < SLOT_COUNT; slot++) {
@@ -464,9 +485,11 @@ contract CCTPEchidna {
 
     /// @notice Calls that reach an implementation directly never move its funds.
     function echidna_implementations_keep_funds() external view returns (bool) {
-        for (uint256 mode = 0; mode < 2; mode++) {
+        for (uint256 index = 0; index < IMPLEMENTATION_COUNT; index++) {
             for (uint256 asset = 0; asset < ASSET_COUNT; asset++) {
-                if (_balance(asset, address(implementations[mode])) != implementationFunded[mode][asset]) return false;
+                if (_balance(asset, address(implementations[index])) != implementationFunded[index][asset]) {
+                    return false;
+                }
             }
         }
 
@@ -475,7 +498,7 @@ contract CCTPEchidna {
 
     /// @dev Forward arguments that often land on a zero amount, the fee cap and the valid thresholds.
     function _forwardArgs(uint256 slot, ForwardInput memory input) internal view returns (ForwardArgs memory) {
-        uint256 balance = _balance(_forwardAsset(_slotMode(slot)), forwarders[slot]);
+        uint256 balance = _balance(_forwardAsset(_mode(slot)), forwarders[slot]);
         uint256 amount = _amount(input.amountCase, input.amountSeed, balance);
 
         return ForwardArgs({
@@ -501,7 +524,7 @@ contract CCTPEchidna {
 
     /// @dev The lesser of the amount and the forwarder's balance of its forward token.
     function _moved(uint256 slot, ForwardArgs memory args) internal view returns (uint256) {
-        uint256 balance = _balance(_forwardAsset(_slotMode(slot)), forwarders[slot]);
+        uint256 balance = _balance(_forwardAsset(_mode(slot)), forwarders[slot]);
 
         return args.amount < balance ? args.amount : balance;
     }
@@ -546,11 +569,12 @@ contract CCTPEchidna {
         if (ok) rescued[message.slot][message.asset] += message.amount;
     }
 
-    /// @dev Code-bearing targets must reject native coin. Returns whether the coin went through.
-    function _sendNative(address to, uint64 amount, bytes calldata data) internal returns (bool ok) {
+    /// @dev Code-bearing targets must reject native coin, unless they are native and get no data. Returns whether
+    ///      the coin went through.
+    function _sendNative(address to, bool native, uint64 amount, bytes calldata data) internal returns (bool ok) {
         if (amount == 0 || amount > address(this).balance) return false;
 
-        bool valid = to.code.length == 0;
+        bool valid = to.code.length == 0 || (native && data.length == 0);
         (ok,) = to.call{value: amount}(data);
         _check(valid, ok, "sendNative");
     }
@@ -682,8 +706,12 @@ contract CCTPEchidna {
     }
 
     /// @dev An amount of the implementation's forward token, sometimes zero or one past its balance.
-    function _implementationAmount(uint256 mode, uint8 amountCase, uint256 amountSeed) internal view returns (uint256) {
-        uint256 balance = _balance(_forwardAsset(mode), address(implementations[mode]));
+    function _implementationAmount(uint256 index, uint8 amountCase, uint256 amountSeed)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 balance = _balance(_forwardAsset(_mode(index)), address(implementations[index]));
 
         return _amount(amountCase, amountSeed, balance);
     }
@@ -700,13 +728,16 @@ contract CCTPEchidna {
             && address(minter).balance == 0;
     }
 
-    /// @dev Each account holds exactly what its Base forwarder forwarded, and no other asset.
+    /// @dev Each account holds exactly what its Base forwarders forwarded, and no other asset.
     function _accountsHoldOnlyTransfers() internal view returns (bool) {
+        uint256[2] memory transferred;
         for (uint256 slot = 0; slot < SLOT_COUNT; slot++) {
-            if (_onBase(slot) && !_accountHoldsOnlyTransfers(_account(slot), forwarded[slot])) return false;
+            if (_onBase(slot)) transferred[slot / IMPLEMENTATION_COUNT] += forwarded[slot];
         }
 
-        return true;
+        return
+            _accountHoldsOnlyTransfers(ACCOUNT_A, transferred[0])
+                && _accountHoldsOnlyTransfers(ACCOUNT_B, transferred[1]);
     }
 
     function _accountHoldsOnlyTransfers(address account, uint256 transferred) internal view returns (bool) {
@@ -762,7 +793,7 @@ contract CCTPEchidna {
         }
 
         return address(forwarder.TOKEN_MESSENGER()) == address(messenger) && forwarder.BASE_USDC() == address(baseUsdc)
-            && forwarder.BASE_CHAIN_ID() == block.chainid + _slotMode(slot);
+            && forwarder.BASE_CHAIN_ID() == block.chainid + _mode(slot);
     }
 
     function _slot(uint8 slotSeed) internal pure returns (uint256) {
@@ -773,25 +804,34 @@ contract CCTPEchidna {
         return assetSeed % ASSET_COUNT;
     }
 
-    function _mode(bool base) internal pure returns (uint256) {
-        return base ? BASE_MODE : SOURCE_MODE;
+    function _implementation(uint8 implementationSeed) internal pure returns (uint256) {
+        return implementationSeed % IMPLEMENTATION_COUNT;
     }
 
-    function _slotMode(uint256 slot) internal pure returns (uint256) {
-        return slot % 2;
+    /// @dev BASE_MODE or SOURCE_MODE of a slot or an implementation index.
+    function _mode(uint256 slotOrIndex) internal pure returns (uint256) {
+        return slotOrIndex % 2;
+    }
+
+    function _slotImplementation(uint256 slot) internal pure returns (uint256) {
+        return slot % IMPLEMENTATION_COUNT;
+    }
+
+    function _isNative(uint256 index) internal pure returns (bool) {
+        return index >= ARC_IMPLEMENTATIONS;
     }
 
     function _onBase(uint256 slot) internal pure returns (bool) {
-        return _slotMode(slot) == BASE_MODE;
+        return _mode(slot) == BASE_MODE;
     }
 
     function _account(uint256 slot) internal pure returns (address) {
-        return slot < 2 ? ACCOUNT_A : ACCOUNT_B;
+        return slot < IMPLEMENTATION_COUNT ? ACCOUNT_A : ACCOUNT_B;
     }
 
-    /// @dev The slot of the same mode that serves the other account.
+    /// @dev The slot of the same implementation that serves the other account.
     function _otherAccountSlot(uint256 slot) internal pure returns (uint256) {
-        return (slot + 2) % SLOT_COUNT;
+        return (slot + IMPLEMENTATION_COUNT) % SLOT_COUNT;
     }
 
     /// @dev The token forward moves: baseUsdc on Base, localUsdc elsewhere.

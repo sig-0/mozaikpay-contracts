@@ -4,12 +4,13 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {VmSafe} from "forge-std/Vm.sol";
 
+import {MozaikCCTPArcForwarder} from "../../src/cctp/MozaikCCTPArcForwarder.sol";
 import {MozaikCCTPForwarder} from "../../src/cctp/MozaikCCTPForwarder.sol";
 import {MozaikCCTPForwarderFactory} from "../../src/cctp/MozaikCCTPForwarderFactory.sol";
 import {CCTPForwarderRecord} from "../../script/cctp/CCTPForwarderRecord.sol";
 
-/// @notice Pins the v1 golden vectors for both environments. The same account, forwarder, implementation and
-///         factory addresses are pinned in the Go and TypeScript derivation tests.
+/// @notice Pins the golden vectors of every record. The same account, forwarder, implementation and factory
+///         addresses are pinned in the Go and TypeScript derivation tests.
 contract MozaikCCTPForwarderGoldenTest is Test, CCTPForwarderRecord {
     address internal constant GOLDEN_ACCOUNT = 0x287B02E09a220f911f5BbAaA3F1c9D170C1B9a08;
 
@@ -21,12 +22,24 @@ contract MozaikCCTPForwarderGoldenTest is Test, CCTPForwarderRecord {
     address internal constant SEPOLIA_FACTORY = 0xfff41108126D9cAa62f1b2Eccd91aC860A8Df5a3;
     address internal constant SEPOLIA_GOLDEN_FORWARDER = 0xeEEfEca0E16769478b25dd488aE836AbcbB65365;
 
+    address internal constant ARC_MAINNET_IMPLEMENTATION = 0xFffee8Df20801E6201F23Ed40e1B37543bFfE342;
+    address internal constant ARC_MAINNET_FACTORY = 0xb2EA07511A7c5f3ee814A479ccFfB43548dE6bfB;
+    address internal constant ARC_MAINNET_GOLDEN_FORWARDER = 0xC962A3EB66FbEbc118FFB67E7da40eFC576aC64F;
+
+    address internal constant ARC_SEPOLIA_IMPLEMENTATION = 0x3B3080253c8277b081b269ED47c562F8250a8e2F;
+    address internal constant ARC_SEPOLIA_FACTORY = 0x8Cc2C0AbAA7984A9187b17163fD649f07fBDFa08;
+    address internal constant ARC_SEPOLIA_GOLDEN_FORWARDER = 0xD5c36B94Cc1694f84004D6A94dA4085452Eb17B8;
+
     ForwarderRecord internal mainnet;
     ForwarderRecord internal sepolia;
+    ForwarderRecord internal arcMainnet;
+    ForwarderRecord internal arcSepolia;
 
     function setUp() public {
         mainnet = _readForwarderRecord("script/cctp/forwarder-v1.json");
         sepolia = _readForwarderRecord("script/cctp/forwarder-v1-sepolia.json");
+        arcMainnet = _readForwarderRecord("script/cctp/forwarder-arc-v1.json");
+        arcSepolia = _readForwarderRecord("script/cctp/forwarder-arc-v1-sepolia.json");
     }
 
     function test_Record_PinsMainnetGoldenVector() public view {
@@ -43,17 +56,50 @@ contract MozaikCCTPForwarderGoldenTest is Test, CCTPForwarderRecord {
         assertEq(sepolia.baseChainId, 84532, "Base chain id");
     }
 
+    function test_Record_PinsArcMainnetGoldenVector() public view {
+        _assertPins(arcMainnet, ARC_MAINNET_IMPLEMENTATION, ARC_MAINNET_FACTORY, ARC_MAINNET_GOLDEN_FORWARDER);
+        assertEq(arcMainnet.tokenMessenger, 0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d, "token messenger");
+        assertEq(arcMainnet.baseUsdc, 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913, "Base USDC");
+        assertEq(arcMainnet.baseChainId, 8453, "Base chain id");
+        assertTrue(arcMainnet.native, "native");
+        assertEq(arcMainnet.chainId, 5042, "chain id");
+    }
+
+    function test_Record_PinsArcSepoliaGoldenVector() public view {
+        _assertPins(arcSepolia, ARC_SEPOLIA_IMPLEMENTATION, ARC_SEPOLIA_FACTORY, ARC_SEPOLIA_GOLDEN_FORWARDER);
+        assertEq(arcSepolia.tokenMessenger, 0x8FE6B999Dc680CcFDD5Bf7EB0974218be2542DAA, "token messenger");
+        assertEq(arcSepolia.baseUsdc, 0x036CbD53842c5426634e7929541eC2318f3dCF7e, "Base USDC");
+        assertEq(arcSepolia.baseChainId, 84532, "Base chain id");
+        assertTrue(arcSepolia.native, "native");
+        assertEq(arcSepolia.chainId, 5042002, "chain id");
+    }
+
+    function test_CheckCircle_RevertsOnAnotherChain() public {
+        vm.chainId(8453);
+
+        vm.expectRevert(bytes("Record is for another chain"));
+        this.checkCircle(arcMainnet);
+    }
+
+    function checkCircle(ForwarderRecord memory record) external view {
+        _checkCircle(record);
+    }
+
     /// @dev Keeps the tests on the deployed bytecode. Coverage builds without the optimizer, so it skips.
     function test_Record_MatchesBuild() public {
         vm.skip(vm.isContext(VmSafe.ForgeContext.Coverage));
 
         _assertMatchesBuild(mainnet);
         _assertMatchesBuild(sepolia);
+        _assertMatchesBuild(arcMainnet);
+        _assertMatchesBuild(arcSepolia);
     }
 
     function test_Record_DeploysAtGoldenAddresses() public {
         _assertDeploys(mainnet);
         _assertDeploys(sepolia);
+        _assertDeploys(arcMainnet);
+        _assertDeploys(arcSepolia);
     }
 
     function _assertPins(ForwarderRecord memory record, address implementation, address factory, address forwarder)
@@ -72,7 +118,7 @@ contract MozaikCCTPForwarderGoldenTest is Test, CCTPForwarderRecord {
     function _assertMatchesBuild(ForwarderRecord memory record) internal pure {
         _assertSameCode(
             record.implementation.initCode,
-            type(MozaikCCTPForwarder).creationCode,
+            record.native ? type(MozaikCCTPArcForwarder).creationCode : type(MozaikCCTPForwarder).creationCode,
             abi.encode(record.tokenMessenger, record.baseUsdc, record.baseChainId),
             "implementation"
         );
@@ -138,5 +184,8 @@ contract MozaikCCTPForwarderGoldenTest is Test, CCTPForwarderRecord {
         assertEq(factory.predict(GOLDEN_ACCOUNT), record.goldenForwarder);
         assertEq(factory.deploy(GOLDEN_ACCOUNT), record.goldenForwarder);
         assertEq(MozaikCCTPForwarder(record.goldenForwarder).account(), GOLDEN_ACCOUNT);
+
+        (bool ok,) = record.goldenForwarder.call{value: 1}("");
+        assertEq(ok, record.native, "native coin accepted");
     }
 }

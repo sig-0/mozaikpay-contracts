@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
 
+import {MozaikCCTPArcForwarder} from "../../src/cctp/MozaikCCTPArcForwarder.sol";
 import {MozaikCCTPForwarder} from "../../src/cctp/MozaikCCTPForwarder.sol";
 import {MozaikCCTPForwarderFactory} from "../../src/cctp/MozaikCCTPForwarderFactory.sol";
 import {CCTPForwarderRecord} from "./CCTPForwarderRecord.sol";
@@ -14,13 +15,12 @@ contract GenerateForwarderRecordScript is Script, CCTPForwarderRecord {
     function run() external {
         string memory path = vm.envString("CCTP_FORWARDER_RECORD");
         ForwarderRecord memory record = _readForwarderRecord(path);
+        bytes memory creationCode =
+            record.native ? type(MozaikCCTPArcForwarder).creationCode : type(MozaikCCTPForwarder).creationCode;
 
         Deployment memory implementation = _build(
             record.implementation.salt,
-            abi.encodePacked(
-                type(MozaikCCTPForwarder).creationCode,
-                abi.encode(record.tokenMessenger, record.baseUsdc, record.baseChainId)
-            )
+            abi.encodePacked(creationCode, abi.encode(record.tokenMessenger, record.baseUsdc, record.baseChainId))
         );
         Deployment memory factory = _build(
             record.factory.salt,

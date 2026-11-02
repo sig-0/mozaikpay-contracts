@@ -27,7 +27,7 @@ You do **not** need to deploy it.
 ## Contracts Overview
 
 Each environment deploys four contracts on Base, one on Ethereum L1, and the CCTP forwarder and its factory on Base
-and every chain that accepts USDC deposits:
+and every chain that accepts USDC deposits, except Arc, which uses item 8:
 
 1. **MozaikAccountFactory** -- CREATE2 factory for deploying ERC-4337 smart accounts. The canonical EntryPoint v0.9 is
    hardcoded (not a constructor argument), matching the account, so deployment and runtime authority cannot diverge.
@@ -55,3 +55,6 @@ and every chain that accepts USDC deposits:
 7. **MozaikCCTPForwarderFactory** -- Deploys forwarder clones at deterministic addresses (`predict`, `deploy`,
    `deployAndForward`). Both contracts deploy through Nick's deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`), so
    the implementation, the factory and every forwarder have the same address on every chain of one environment.
+8. **MozaikCCTPArcForwarder** (`src/cctp/`) -- A v1 forwarder plus `receive()`, so it also accepts the native coin. It
+   is deployed on Arc mainnet and Arc testnet through its own records (`script/cctp/forwarder-arc-v1*.json`,
+   `RECORD=arc` or `RECORD=arc-sepolia`), at addresses different from v1, because Arc's native coin is USDC.

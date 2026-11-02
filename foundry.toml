@@ -51,6 +51,8 @@ arbitrum = "${ARBITRUM_MAINNET_RPC}"
 arbitrum_sepolia = "${ARBITRUM_SEPOLIA_RPC}"
 polygon = "${POLYGON_MAINNET_RPC}"
 amoy = "${POLYGON_AMOY_RPC}"
+arc = "${ARC_MAINNET_RPC}"
+arc_testnet = "${ARC_TESTNET_RPC}"
 
 [etherscan]
 base_mainnet = { key = "${ETHERSCAN_API_KEY}", chain = 8453 }
